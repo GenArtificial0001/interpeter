@@ -37,15 +37,23 @@ class TTSBackend(ABC):
 # --- Adaptadores a "etapas" del StageRunner -------------------------------------------------------
 
 
+DropCallback = Callable[[str], None]
+
+
 class STTStage:
     name = "stt"
 
     def __init__(
-        self, backend: STTBackend, language: str, on_text: Callable[[str], None] | None = None
+        self,
+        backend: STTBackend,
+        language: str,
+        on_text: Callable[[str], None] | None = None,
+        on_drop: DropCallback | None = None,
     ) -> None:
         self.backend = backend
         self.language = language
         self.on_text = on_text
+        self.on_drop = on_drop
 
     def process(self, seg: SpeechSegment) -> Iterator[Transcript]:
         t0 = perf_counter()
@@ -56,15 +64,24 @@ class STTStage:
             if self.on_text is not None:
                 self.on_text(text)
             yield Transcript(text, self.language, seg.generation, seg.timings)
+        elif self.on_drop is not None:
+            self.on_drop("sin_texto")  # ruido, murmullo o voz demasiado baja: no se entendió nada
 
 
 class MTStage:
     name = "mt"
 
-    def __init__(self, backend: MTBackend, target: str, on_text: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        backend: MTBackend,
+        target: str,
+        on_text: Callable[[str], None] | None = None,
+        on_drop: DropCallback | None = None,
+    ) -> None:
         self.backend = backend
         self.target = target  # se puede cambiar en caliente desde otro hilo (asignación atómica)
         self.on_text = on_text
+        self.on_drop = on_drop
 
     def process(self, tr: Transcript) -> Iterator[Translation]:
         target = self.target
@@ -76,13 +93,16 @@ class MTStage:
             if self.on_text is not None:
                 self.on_text(text)
             yield Translation(text, tr.language, target, tr.generation, tr.timings)
+        elif self.on_drop is not None:
+            self.on_drop("traduccion_vacia")
 
 
 class TTSStage:
     name = "tts"
 
-    def __init__(self, backend: TTSBackend) -> None:
+    def __init__(self, backend: TTSBackend, on_drop: DropCallback | None = None) -> None:
         self.backend = backend
+        self.on_drop = on_drop
 
     def process(self, tl: Translation) -> Iterator[AudioChunk]:
         first = True
@@ -91,3 +111,5 @@ class TTSStage:
                 tl.timings.tts_first_audio = tl.timings.e2e()
             yield AudioChunk(audio, self.backend.sample_rate, tl.generation, first, tl.timings)
             first = False
+        if first and self.on_drop is not None:
+            self.on_drop("sin_audio")  # la síntesis no produjo ningún trozo

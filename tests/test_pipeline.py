@@ -98,3 +98,25 @@ def test_texto_vacio_no_produce_audio():
     finally:
         p.stop()
     assert chunks == []
+
+
+def test_cada_etapa_avisa_cuando_no_produce_nada():
+    from interpreter.stages.fakes import FakeMT, FakeSTT, FakeTTS
+
+    casos = [
+        (FakeSTT(text="   "), FakeMT(), FakeTTS(), "sin_texto"),
+        (FakeSTT(), FakeMT(table={"hola mundo": "  "}), FakeTTS(), "traduccion_vacia"),
+        (FakeSTT(), FakeMT(), FakeTTS(chunks=0), "sin_audio"),
+    ]
+    for stt, mt, tts, esperado in casos:
+        motivos = []
+        p = Pipeline(stt, mt, tts, "es", "en", on_drop=motivos.append)
+        p.start()
+        try:
+            p.submit(seg())
+            end = time.time() + 3
+            while not motivos and time.time() < end:
+                time.sleep(0.02)
+        finally:
+            p.stop()
+        assert motivos == [esperado], (esperado, motivos)

@@ -49,6 +49,7 @@ class Pipeline:
         on_metrics: MetricsCallback | None = None,
         on_transcript: Callable[[str], None] | None = None,
         on_translation: Callable[[str], None] | None = None,
+        on_drop: Callable[[str], None] | None = None,
     ) -> None:
         self.cancel = CancelScope()
         self.on_metrics = on_metrics
@@ -57,12 +58,12 @@ class Pipeline:
         q_text: queue.Queue = queue.Queue()
         q_tr: queue.Queue = queue.Queue()
         self.audio_out: queue.Queue = queue.Queue()
-        self._mt_stage = MTStage(mt, target_language, on_translation)
-        stt_stage = STTStage(stt, source_language, on_transcript)
+        self._mt_stage = MTStage(mt, target_language, on_translation, on_drop)
+        stt_stage = STTStage(stt, source_language, on_transcript, on_drop)
         self._runners = [
             StageRunner(stt_stage, self._in, q_text, self.cancel, on_error),
             StageRunner(self._mt_stage, q_text, q_tr, self.cancel, on_error),
-            StageRunner(TTSStage(tts), q_tr, self.audio_out, self.cancel, on_error),
+            StageRunner(TTSStage(tts, on_drop), q_tr, self.audio_out, self.cancel, on_error),
         ]
         self.sample_rate = tts.sample_rate
 

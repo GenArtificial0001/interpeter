@@ -206,6 +206,7 @@ class Engine:
                 on_metrics=self._on_metrics,
                 on_transcript=self._on_original,
                 on_translation=self._on_translation,
+                on_drop=self._on_pipeline_drop,
             )
             classifier = AdaptiveEnergyVAD() if cfg.vad_mode == "auto" else EnergyVAD(cfg.vad_threshold_db)
             segmenter = Segmenter(classifier, VadConfig(end_silence_ms=max(160, cfg.pause_ms)))
@@ -213,7 +214,11 @@ class Engine:
                 cfg.output_device, self._pipeline.get_audio, self.events.on_error
             )
             self._capture = self._capture_factory(
-                cfg.input_device, segmenter, self._on_segment, self.events.on_level
+                cfg.input_device,
+                segmenter,
+                self._on_segment,
+                self.events.on_level,
+                on_error=self.events.on_error,
             )
             self._pipeline.start()
             self._player.start()
@@ -258,6 +263,10 @@ class Engine:
     def set_muted(self, muted: bool) -> None:
         self.muted = muted
 
+    def _on_pipeline_drop(self, reason: str) -> None:
+        log.info("Frase sin resultado: %s", reason)
+        self.events.on_dropped(reason, 0.0)
+
     def _on_original(self, text: str) -> None:
         log.info("Reconocido: %s", text)
         self.events.on_original(text)
@@ -283,7 +292,9 @@ class Engine:
         self.segments_sent += 1
         log.info("Frase detectada: %.1f s", seconds)
         self.events.on_segment(seconds)
-        self._pipeline.submit(seg)
+        if self._pipeline.submit(seg):  # cola llena: se descartó la frase más vieja
+            log.warning("Cola de entrada llena: se descartó la frase más vieja")
+            self.events.on_dropped("cola", 0.0)
 
 
 # -- utilidades de configuración ---------------------------------------------------------------------

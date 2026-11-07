@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self._device_scanner = device_scanner
+        self._devices_initialized = False
         self._audio_busy = False  # prueba de bucle o grabación en curso: no tocar PortAudio
         self._pill_state: tuple[EngineState, str] = (EngineState.IDLE, "")
         self._recorder = recorder
@@ -284,6 +285,14 @@ class MainWindow(QMainWindow):
         audio_lay.addWidget(self.lbl_loop)
         outer.addWidget(audio_card)
 
+        self.mute_banner = QLabel("🔇  MICRÓFONO SILENCIADO — lo que digas NO se traduce. Pulsa «reanudar».")
+        self.mute_banner.setStyleSheet(
+            f"background:{theme.WARN}; color:#2a1a00; font-weight:700; border-radius:8px; padding:10px 14px;"
+        )
+        self.mute_banner.setWordWrap(True)
+        self.mute_banner.hide()
+        outer.addWidget(self.mute_banner)
+
         # Control
         ctrl = QHBoxLayout()
         self.btn_toggle = QPushButton("Iniciar interpretación")
@@ -397,7 +406,20 @@ class MainWindow(QMainWindow):
             idx = combo.findText(keep) if keep else -1
             combo.setCurrentIndex(idx if idx >= 0 else 0)
             combo.blockSignals(False)
+        if not self._devices_initialized:
+            self._devices_initialized = True
+            self._prefer_distinct_output()
         self._check_devices()
+
+    def _prefer_distinct_output(self) -> None:
+        """En el primer arranque, evita que micrófono y salida sean del mismo equipo (eco/Bluetooth)."""
+        inp, out = self.cmb_input.currentText(), self.cmb_output.currentText()
+        if not inp or check_devices(inp, out).ok:
+            return
+        for i in range(self.cmb_output.count()):
+            if check_devices(inp, self.cmb_output.itemText(i)).ok:
+                self.cmb_output.setCurrentIndex(i)
+                return
 
     def _poll_devices(self) -> None:
         """Detecta dispositivos conectados o desconectados mientras la app está abierta."""
@@ -514,15 +536,14 @@ class MainWindow(QMainWindow):
             return
         self._apply_config()
         self._save_settings()
+        if self.btn_mute.isChecked():
+            # Una sesión nueva debe interpretar: se quita el silencio y se informa en la transcripción.
+            self.btn_mute.setChecked(False)
+            self._log("🎙", "Micrófono reactivado al iniciar la interpretación.")
         try:
             self.engine.start()
         except EngineError as exc:
             self._on_error(str(exc))
-            return
-        if self.btn_mute.isChecked():
-            self._show_warning(
-                "El micrófono está SILENCIADO: no se traducirá nada hasta que pulses «reanudar»."
-            )
 
     def _on_target_changed(self) -> None:
         if self.engine.state is EngineState.RUNNING:
@@ -608,7 +629,7 @@ class MainWindow(QMainWindow):
         state, detail = self._pill_state
         text = detail or STATE_TEXT[state]
         color = theme.STATE_COLORS[state.value]
-        if self.engine.muted and state is EngineState.RUNNING:
+        if self.engine.muted and state in (EngineState.RUNNING, EngineState.READY):
             text, color = "Silenciado: no se traduce", theme.WARN
         self.state_pill.setText("● " + text)
         self.state_pill.setStyleSheet(
@@ -625,11 +646,24 @@ class MainWindow(QMainWindow):
             else ""
         )
         self._render_pill()
+        self.mute_banner.setVisible(muted)
+        self.setWindowTitle("Interpreter — SILENCIADO" if muted else "Interpreter")
         if muted:
             self._log("🔇", "Micrófono silenciado: lo que digas no se traducirá hasta que pulses «reanudar».")
 
     def _on_dropped(self, reason: str, seconds: float) -> None:
-        self._log("🔇", f"frase de {seconds:.1f} s ignorada ({reason}). Pulsa «reanudar» para traducir.")
+        textos = {
+            "silenciado": (
+                "🔇",
+                f"frase de {seconds:.1f} s ignorada: el micrófono está silenciado. Pulsa «reanudar».",
+            ),
+            "sin_texto": ("⚠", "no se entendió nada en esa frase (¿micrófono lejos o volumen bajo?)."),
+            "traduccion_vacia": ("⚠", "la traducción salió vacía; esa frase no se dirá."),
+            "sin_audio": ("⚠", "se tradujo pero no se generó audio para esa frase."),
+            "cola": ("⚠", "voy atrasado: descarté una frase anterior (el reconocimiento no da abasto)."),
+        }
+        icono, texto = textos.get(reason, ("⚠", f"frase descartada ({reason})."))
+        self._log(icono, texto)
 
     def _on_state(self, state: EngineState, detail: str) -> None:
         self._pill_state = (state, detail)
@@ -638,9 +672,9 @@ class MainWindow(QMainWindow):
         ready = state is EngineState.READY
         self.btn_toggle.setEnabled(ready or running)
         self.btn_toggle.setText("Detener" if running else "Iniciar interpretación")
-        self.btn_toggle.setObjectName("primary stop" if running else "primary")
-        self.btn_toggle.setProperty("class", "stop" if running else "")
-        self.btn_toggle.setStyleSheet(f"background:{theme.DANGER}; color:#2a0a0a;" if running else "")
+        self.btn_toggle.setProperty("stop", running)  # el estilo sale de theme.py: #primary[stop="true"]
+        self.btn_toggle.style().unpolish(self.btn_toggle)
+        self.btn_toggle.style().polish(self.btn_toggle)
         editable = not running and state is not EngineState.LOADING
         for w in (
             self.cmb_source,
@@ -659,6 +693,9 @@ class MainWindow(QMainWindow):
             self._level = 0.0
 
     def _on_level(self, rms: float) -> None:
+        if self.engine.muted:  # silenciado: el medidor quieto evita pensar que se está traduciendo
+            self._level = 0.0
+            return
         self._level = max(self._level * 0.6, rms)  # caída suave, subida inmediata
 
     def _tick_meter(self) -> None:

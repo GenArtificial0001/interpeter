@@ -50,8 +50,8 @@ QPushButton#primary {{
 }}
 QPushButton#primary:hover {{ background: #5eead4; }}
 QPushButton#primary:disabled {{ background: {SURFACE_2}; color: {MUTED}; }}
-QPushButton#stop {{ background: {DANGER}; color: #2a0a0a; }}
-QPushButton#stop:hover {{ background: #fca5a5; }}
+QPushButton#primary[stop="true"] {{ background: {DANGER}; color: #2a0a0a; }}
+QPushButton#primary[stop="true"]:hover {{ background: #fca5a5; }}
 QPushButton:checked {{ background: {ACCENT_DARK}; border-color: {ACCENT}; }}
 QProgressBar {{
     background: {SURFACE_2}; border: none; border-radius: 4px; max-height: 8px; min-height: 8px;

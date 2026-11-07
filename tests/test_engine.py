@@ -9,7 +9,7 @@ from interpreter.stages.fakes import FakeMT, FakeSTT, FakeTTS
 
 
 class FakeCapture:
-    def __init__(self, device, segmenter, on_segment, on_level):
+    def __init__(self, device, segmenter, on_segment, on_level, on_error=None):
         self.on_segment = on_segment
         self.started = False
         self.stopped = False
@@ -53,8 +53,8 @@ def fake_backends(cfg):
 def make(events=None, cfg=None):
     holder = {}
 
-    def cap(*a):
-        holder["cap"] = FakeCapture(*a)
+    def cap(*a, **k):
+        holder["cap"] = FakeCapture(*a, **k)
         return holder["cap"]
 
     def ply(*a):
@@ -312,3 +312,38 @@ def test_combinaciones_de_equipos_distintos_no_avisan():
     ).ok
     assert check_devices("Headset (WL5024)", "Altavoces (11- Cirrus Logic XU)").ok
     assert check_devices("Mic USB", "Salida sin etiqueta").ok
+
+
+def test_el_desborde_de_la_cola_se_informa():
+    caidas = []
+    eng, h = make(EngineEvents(on_dropped=lambda motivo, s: caidas.append(motivo)))
+    eng._backend_factory = lambda cfg: (FakeSTT(delay=0.4), FakeMT(), FakeTTS(chunks=1))
+    eng.load()
+    eng.start()
+    for _ in range(8):
+        h["cap"].on_segment(seg())
+    assert "cola" in caidas
+    eng.stop()
+
+
+def test_el_motor_pasa_el_manejador_de_errores_a_la_captura():
+    recibido = {}
+
+    class Cap(FakeCapture):
+        def __init__(self, device, segmenter, on_segment, on_level, on_error=None):
+            super().__init__(device, segmenter, on_segment, on_level, on_error)
+            recibido["on_error"] = on_error
+
+    errores = []
+    eng = Engine(
+        EngineConfig(),
+        EngineEvents(on_error=errores.append),
+        fake_backends,
+        Cap,
+        FakePlayer,
+    )
+    eng.load()
+    eng.start()
+    recibido["on_error"]("fallo del micrófono")
+    assert errores == ["fallo del micrófono"]
+    eng.stop()

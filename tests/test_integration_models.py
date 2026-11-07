@@ -24,7 +24,7 @@ class FeedCapture:
 
     audio: np.ndarray
 
-    def __init__(self, device, segmenter, on_segment, on_level):
+    def __init__(self, device, segmenter, on_segment, on_level, on_error=None):
         self.segmenter, self.on_segment, self.on_level = segmenter, on_segment, on_level
         self._t = None
 

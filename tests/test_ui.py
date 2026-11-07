@@ -19,7 +19,7 @@ from interpreter.ui.window import MainWindow  # noqa: E402
 
 
 class _Cap:
-    def __init__(self, device, segmenter, on_segment, on_level):
+    def __init__(self, device, segmenter, on_segment, on_level, on_error=None):
         _Cap.last = self
         self.on_segment, self.on_level = on_segment, on_level
 
@@ -302,11 +302,85 @@ def test_una_frase_ignorada_por_silencio_se_ve_en_la_transcripcion(app, settings
     win.close()
 
 
-def test_iniciar_estando_silenciado_muestra_un_aviso(app, settings):
+def test_iniciar_estando_silenciado_reactiva_el_microfono_y_lo_informa(app, settings):
     win = MainWindow(_builder, settings=settings)
     pump(app, lambda: win.btn_toggle.isEnabled())
     win.btn_mute.click()
+    assert win.engine.muted and not win.mute_banner.isHidden()
     win.btn_toggle.click()
-    assert not win.lbl_warning.isHidden() and "SILENCIADO" in win.lbl_warning.text()
+    assert win.engine.state is EngineState.RUNNING
+    assert not win.engine.muted and not win.btn_mute.isChecked() and win.mute_banner.isHidden()
+    assert "reactivado" in win.log.toPlainText()
     win.btn_toggle.click()
+    win.close()
+
+
+def test_el_banner_y_el_titulo_siguen_al_silencio(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert win.mute_banner.isHidden() and win.windowTitle() == "Interpreter"
+    win.btn_mute.click()
+    assert not win.mute_banner.isHidden() and "SILENCIADO" in win.windowTitle()
+    assert "Silenciado" in win.state_pill.text()  # también en "Listo", no solo interpretando
+    win.btn_mute.click()
+    assert win.mute_banner.isHidden() and win.windowTitle() == "Interpreter"
+    win.close()
+
+
+def test_el_medidor_no_se_mueve_mientras_esta_silenciado(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.btn_mute.click()
+    win._on_level(0.3)
+    win._tick_meter()
+    assert win.level_bar.value() == 0
+    win.close()
+
+
+def test_los_avisos_por_motivo_se_ven_en_la_transcripcion(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    for motivo, texto in (
+        ("sin_texto", "no se entendió nada"),
+        ("traduccion_vacia", "traducción salió vacía"),
+        ("sin_audio", "no se generó audio"),
+        ("cola", "voy atrasado"),
+    ):
+        win._on_dropped(motivo, 0.0)
+        assert texto in win.log.toPlainText()
+    win.close()
+
+
+def test_el_boton_detener_usa_la_propiedad_stop(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert win.btn_toggle.objectName() == "primary" and not win.btn_toggle.property("stop")
+    win.btn_toggle.click()
+    assert win.btn_toggle.objectName() == "primary" and win.btn_toggle.property("stop") is True
+    win.btn_toggle.click()
+    assert not win.btn_toggle.property("stop")
+    win.close()
+
+
+def test_primer_arranque_elige_una_salida_de_otro_equipo(app, settings):
+    estado = {
+        "in": [_dev(1, "Microphone Array on SoundWire Device (9- Cirrus Logic XU)")],
+        "out": [_dev(2, "Altavoces (11- Cirrus Logic XU)"), _dev(4, "Headphones (WL5024)")],
+    }
+    win = MainWindow(_builder, settings=settings, device_scanner=_scanner(estado))
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert win.cmb_output.currentText() == "Headphones (WL5024)"
+    assert win.lbl_warning.isHidden()
+    win.close()
+
+
+def test_si_solo_hay_un_equipo_se_mantiene_y_avisa(app, settings):
+    estado = {
+        "in": [_dev(1, "Microphone Array on SoundWire Device (9- Cirrus Logic XU)")],
+        "out": [_dev(2, "Altavoces (11- Cirrus Logic XU)")],
+    }
+    win = MainWindow(_builder, settings=settings, device_scanner=_scanner(estado))
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert win.cmb_output.currentText() == "Altavoces (11- Cirrus Logic XU)"
+    assert not win.lbl_warning.isHidden()
     win.close()

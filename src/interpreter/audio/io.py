@@ -32,9 +32,11 @@ class MicCapture:
         on_segment: Callable[[SpeechSegment], None],
         on_level: Callable[[float], None] | None = None,
         samplerate: int | None = None,
+        on_error: Callable[[str], None] | None = None,
     ) -> None:
         import sounddevice as sd
 
+        self._on_error = on_error
         self._sd = sd
         self.device = device
         self.segmenter = segmenter
@@ -72,11 +74,16 @@ class MicCapture:
                 block = self._q.get(timeout=0.1)
             except queue.Empty:
                 continue
-            x = self._resample(block)
-            if self.on_level is not None:
-                self.on_level(float(np.sqrt(np.mean(np.square(x)))) if x.size else 0.0)
-            for seg in self.segmenter.feed(x):
-                self.on_segment(seg)
+            try:
+                x = self._resample(block)
+                if self.on_level is not None:
+                    self.on_level(float(np.sqrt(np.mean(np.square(x)))) if x.size else 0.0)
+                for seg in self.segmenter.feed(x):
+                    self.on_segment(seg)
+            except Exception as exc:  # noqa: BLE001 - no matar el hilo: informar y seguir con el siguiente bloque
+                log.exception("Error procesando el audio del micrófono")
+                if self._on_error is not None:
+                    self._on_error(f"Error procesando el micrófono: {exc}")
 
     def start(self) -> None:
         self._stop.clear()
