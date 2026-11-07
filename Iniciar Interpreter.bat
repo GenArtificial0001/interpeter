@@ -1,9 +1,12 @@
 @echo off
 rem Inicia Interpreter sin ventana de consola. Los registros quedan en logs\interpreter.log
+rem Usa .venv-clone (tiene los modelos de voz clonada) y, si no existe, .venv.
 setlocal
 cd /d "%~dp0"
-if not exist ".venv\Scripts\pythonw.exe" (
-  echo No se encontro el entorno .venv en esta carpeta.
+set "ENVDIR=.venv-clone"
+if not exist "%ENVDIR%\Scripts\pythonw.exe" set "ENVDIR=.venv"
+if not exist "%ENVDIR%\Scripts\pythonw.exe" (
+  echo No se encontro ningun entorno ^(.venv-clone o .venv^) en esta carpeta.
   echo Crealo con:
   echo   python -m venv .venv
   echo   .venv\Scripts\python -m pip install -e ".[ml,ui,ov,dev]"
@@ -11,5 +14,5 @@ if not exist ".venv\Scripts\pythonw.exe" (
   exit /b 1
 )
 set PYTHONUTF8=1
-start "" ".venv\Scripts\pythonw.exe" -m interpreter
+start "" "%ENVDIR%\Scripts\pythonw.exe" -m interpreter
 endlocal

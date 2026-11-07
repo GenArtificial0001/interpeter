@@ -422,3 +422,75 @@ def test_anti_eco_desactivado_no_descarta_nada():
     h["cap"].on_segment(_seg_de(1.0))
     assert wait_for(lambda: enviadas == [1.0])
     eng.stop()
+
+
+# -- perfil «Clonado rápido» (YourTTS) --------------------------------------------------------------------
+
+
+def test_default_backends_elige_yourtts_para_clone_fast(monkeypatch, tmp_path):
+    from interpreter import engine as eng_mod
+    from interpreter.stages import backends
+
+    elegidos = []
+
+    class Falso:
+        sample_rate = 16000
+
+        def __init__(self, *a, **k):
+            elegidos.append((type(self).__name__, a))
+
+    class FakeYour(Falso): ...
+
+    class FakeXtts(Falso): ...
+
+    class FakeMms(Falso): ...
+
+    class FakeMT(Falso): ...
+
+    monkeypatch.setenv("INTERPRETER_HOME", str(tmp_path))
+    monkeypatch.setattr(backends, "YourTTSClone", FakeYour)
+    monkeypatch.setattr(backends, "XTTSClone", FakeXtts)
+    monkeypatch.setattr(backends, "MMSTTS", FakeMms)
+    monkeypatch.setattr(backends, "NLLBTranslator", FakeMT)
+    monkeypatch.setattr(eng_mod, "make_stt", lambda cfg: Falso())
+
+    for perfil, esperado in (("clone_fast", "FakeYour"), ("clone", "FakeXtts"), ("fast", "FakeMms")):
+        elegidos.clear()
+        eng_mod.default_backends(EngineConfig(tts_profile=perfil, reference_wav="voz.wav"))
+        assert esperado in [n for n, _ in elegidos], (perfil, elegidos)
+
+
+def test_el_perfil_clonado_usa_la_muestra_grabada_por_defecto(monkeypatch, tmp_path):
+    from interpreter import engine as eng_mod
+
+    monkeypatch.setenv("INTERPRETER_HOME", str(tmp_path))
+    assert eng_mod.default_reference() is None
+    (tmp_path / "voices").mkdir()
+    (tmp_path / "voices" / "mi_voz.wav").write_bytes(b"RIFF")
+    assert eng_mod.default_reference().endswith("mi_voz.wav")
+
+
+def test_sin_muestra_de_voz_el_clonado_pide_grabarla(monkeypatch, tmp_path):
+    from interpreter import engine as eng_mod
+    from interpreter.stages import backends
+
+    monkeypatch.setenv("INTERPRETER_HOME", str(tmp_path))
+    monkeypatch.setattr(eng_mod, "make_stt", lambda cfg: FakeSTT())
+    monkeypatch.setattr(backends, "NLLBTranslator", lambda *a, **k: FakeMT())
+    with pytest.raises(EngineError, match="Grabar mi voz"):
+        eng_mod.default_backends(EngineConfig(tts_profile="clone_fast"))
+
+
+def test_si_el_clonado_rapido_falla_tambien_se_vuelve_a_la_voz_rapida():
+    errores, intentos = [], []
+
+    def fabrica(cfg):
+        intentos.append(cfg.tts_profile)
+        if cfg.tts_profile == "clone_fast":
+            raise RuntimeError("coqui-tts no está instalado")
+        return FakeSTT(), FakeMT(), FakeTTS(chunks=1)
+
+    eng = Engine(EngineConfig(tts_profile="clone_fast"), EngineEvents(on_error=errores.append), fabrica)
+    eng.load()
+    assert intentos == ["clone_fast", "fast"] and eng.state is EngineState.READY
+    assert "voz rápida" in errores[0]

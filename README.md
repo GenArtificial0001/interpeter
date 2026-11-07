@@ -75,3 +75,23 @@ docs/plans/         diseño, plan de implementación y análisis de repos de ref
 Doble clic en **`Iniciar Interpreter.bat`** (sin consola; registros en `logs\interpreter.log`). Si algo falla,
 **`Iniciar Interpreter (consola).bat`** muestra los mensajes. El `.exe` de `build/dist` es una versión
 anterior y no se actualiza solo: se regenera con PyInstaller cuando haga falta.
+
+## Perfiles de voz
+
+| Perfil | Voz | Velocidad (CPU) | Licencia del modelo |
+|---|---|---|---|
+| Rápido (voz genérica) | MMS-TTS, suena robótica | RTF ≈ 0,25 | CC-BY-NC |
+| **Clonado rápido (YourTTS)** | Tu timbre, en inglés, francés y portugués | RTF ≈ 0,14 (tiempo real) | CC BY-NC-ND 4.0 |
+| Clonado alta calidad (XTTSv2) | Tu timbre, más natural | RTF ≈ 1,8 (no sostenible en CPU) | Coqui Public Model License |
+
+Para clonar: «Grabar mi voz…» (25 s) y elegir el perfil; la primera vez se pide aceptar la licencia
+(uso no comercial). Los dos perfiles clonados necesitan `coqui-tts`, que exige `torch<2.8` y
+`transformers<5` (extra `clone`). El `.bat` usa `.venv-clone`, que ya los tiene.
+
+## Eco y ruido
+
+Whisper puede «inventar» frases sobre ruido o sobre la propia voz traducida (p. ej. «¡Suscríbete!»). La
+app calcula la probabilidad del idioma esperado y la confianza de cada frase y descarta lo que no parece
+voz en ese idioma, y la casilla **Anti-eco** ignora lo que el micrófono capta mientras suena la
+traducción. Con micrófono y altavoces del mismo equipo (o el mismo auricular Bluetooth) conviene separar
+los dispositivos.

@@ -29,7 +29,13 @@ ml = [
     "huggingface-hub>=0.25",
     "librosa>=0.10",
 ]
-clone = ["coqui-tts>=0.24"]
+# Voz clonada (YourTTS y XTTSv2). coqui-tts exige estas versiones: con torch>=2.8 o transformers>=5 no arranca.
+clone = [
+    "coqui-tts>=0.24",
+    "torch>=2.4,<2.8",
+    "torchaudio>=2.4,<2.8",
+    "transformers>=4.56,<5",
+]
 # Aceleración en la GPU/NPU de Intel (el índice de Ford tiene `openvino`, no `openvino-genai` ni `optimum`).
 ov = ["openvino>=2026.1"]
 ui = ["PySide6>=6.6"]

@@ -150,6 +150,11 @@ class WhisperSTT(STTBackend):
         return "" if self.last_reject else text
 
 
+def clean_translation(text: str) -> str:
+    """NLLB a veces antepone un guion de diálogo ("- Bye, then."): el TTS lo leería como una pausa rara."""
+    return text.strip().lstrip("-–—").strip()
+
+
 def openvino_devices() -> list[str]:
     """Dispositivos que OpenVINO ve (``CPU``, ``GPU``, ``NPU``). Vacío si no está instalado."""
     try:
@@ -255,7 +260,7 @@ class NLLBTranslator(MTBackend):
                 max_new_tokens=int(inputs["input_ids"].shape[1] * 2.5) + 10,
                 num_beams=self.beams,
             )
-        return self._tok.batch_decode(out, skip_special_tokens=True)[0]
+        return clean_translation(self._tok.batch_decode(out, skip_special_tokens=True)[0])
 
 
 class MMSTTS(TTSBackend):
@@ -286,6 +291,59 @@ class MMSTTS(TTSBackend):
         with torch.inference_mode():
             wav = model(**tok(text, return_tensors="pt")).waveform[0].numpy()
         yield wav.astype(np.float32)
+
+
+def prepare_reference(reference_wav: str | Path, seconds: float = 10.0) -> Path:
+    """Recorta la muestra de voz a ``seconds`` de voz y la deja en ``<datos>/voices`` (mono, 16 bits).
+
+    YourTTS calcula la huella de la voz en cada frase: con una referencia corta es más rápido y la
+    calidad de la clonación no mejora con más de ~10 s.
+    """
+    import soundfile as sf
+
+    audio, sr = sf.read(str(reference_wav), dtype="float32")
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    frame = max(1, sr // 50)  # 20 ms
+    n = audio.size // frame
+    rms = np.sqrt((audio[: n * frame].reshape(n, frame) ** 2).mean(axis=1)) if n else np.zeros(1)
+    voiced = np.flatnonzero(rms > 10 ** (-45 / 20))
+    start = int(voiced[0]) * frame if voiced.size else 0
+    clip = audio[start : start + int(seconds * sr)]
+    out = app_home() / "voices" / "referencia_corta.wav"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(out), clip, sr, subtype="PCM_16")
+    return out
+
+
+class YourTTSClone(TTSBackend):
+    """Perfil *clonado rápido*: YourTTS (VITS multilingüe con clonación) vía ``coqui-tts``.
+
+    Habla en inglés, francés y portugués con el timbre de la muestra del usuario. En CPU genera unas 7
+    veces más rápido que el tiempo real (RTF ≈ 0,14), frente a XTTSv2 (RTF ≈ 1,8). Licencia del modelo:
+    CC BY-NC-ND 4.0 (uso no comercial, sin obras derivadas: se usa tal cual).
+    """
+
+    LANGS = {"en": "en", "fr": "fr-fr", "pt": "pt-br"}
+
+    def __init__(self, reference_wav: str | Path, device: str = "cpu") -> None:
+        use_local_model_cache()
+        os.environ.setdefault("COQUI_TTS_HOME", str(app_home() / "models" / "tts"))
+        warnings.filterwarnings("ignore")
+        from TTS.api import TTS  # type: ignore[import-not-found]
+
+        self.reference = str(prepare_reference(reference_wav))
+        self._tts = TTS("tts_models/multilingual/multi-dataset/your_tts").to(device)
+        self.sample_rate = int(self._tts.synthesizer.output_sample_rate)
+
+    def synthesize(self, text: str, language: str) -> Iterator[np.ndarray]:
+        code = self.LANGS.get(language)
+        if code is None:
+            raise ValueError(
+                f"El perfil clonado rápido solo habla inglés, francés y portugués ({language!r})."
+            )
+        wav = self._tts.tts(text=text, speaker_wav=self.reference, language=code)
+        yield np.asarray(wav, dtype=np.float32)
 
 
 class XTTSClone(TTSBackend):

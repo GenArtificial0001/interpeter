@@ -414,7 +414,7 @@ def test_elegir_clonado_pide_la_licencia_y_la_recuerda(app, settings, monkeypatc
         _builder,
         settings=settings,
         clone_is_available=True,
-        license_prompt=lambda parent: preguntas.append(1) or True,
+        license_prompt=lambda *a: preguntas.append(a[-1]) or True,
     )
     pump(app, lambda: win.btn_toggle.isEnabled())
     win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone"))
@@ -429,9 +429,7 @@ def test_elegir_clonado_pide_la_licencia_y_la_recuerda(app, settings, monkeypatc
 
 def test_rechazar_la_licencia_deja_el_perfil_rapido(app, settings, monkeypatch):
     monkeypatch.delenv("COQUI_TOS_AGREED", raising=False)
-    win = MainWindow(
-        _builder, settings=settings, clone_is_available=True, license_prompt=lambda parent: False
-    )
+    win = MainWindow(_builder, settings=settings, clone_is_available=True, license_prompt=lambda *a: False)
     pump(app, lambda: win.btn_toggle.isEnabled())
     win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone"))
     assert win.cmb_profile.currentData() == "fast"
@@ -483,4 +481,37 @@ def test_los_avisos_de_eco_e_idioma_se_ven(app, settings):
     ):
         win._on_dropped(motivo, 1.5)
         assert texto in win.log.toPlainText()
+    win.close()
+
+
+def test_hay_tres_perfiles_y_los_clonados_piden_cada_uno_su_licencia(app, settings, monkeypatch):
+    monkeypatch.delenv("COQUI_TOS_AGREED", raising=False)
+    vistas = []
+    win = MainWindow(
+        _builder,
+        settings=settings,
+        clone_is_available=True,
+        license_prompt=lambda parent, perfil: vistas.append(perfil) or True,
+    )
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    perfiles = [win.cmb_profile.itemData(i) for i in range(win.cmb_profile.count())]
+    assert perfiles == ["fast", "clone_fast", "clone"]
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone_fast"))
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone"))
+    win.cmb_profile.setCurrentIndex(
+        win.cmb_profile.findData("clone_fast")
+    )  # ya aceptada: no vuelve a preguntar
+    assert vistas == ["clone_fast", "clone"]
+    monkeypatch.delenv("COQUI_TOS_AGREED", raising=False)
+    win.close()
+
+
+def test_sin_coqui_los_dos_perfiles_clonados_quedan_desactivados(app, settings):
+    win = MainWindow(_builder, settings=settings, clone_is_available=False)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    for perfil in ("clone_fast", "clone"):
+        idx = win.cmb_profile.findData(perfil)
+        assert "no instalado" in win.cmb_profile.itemText(idx)
+        assert not win.cmb_profile.model().item(idx).isEnabled()
+    assert win.cmb_profile.model().item(win.cmb_profile.findData("fast")).isEnabled()
     win.close()

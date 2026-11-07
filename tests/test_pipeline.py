@@ -138,3 +138,29 @@ def test_el_motivo_del_rechazo_del_reconocedor_llega_al_aviso():
         stage = STTStage(Rechaza(motivo), "es", on_drop=vistos.append)
         assert list(stage.process(seg())) == []
         assert vistos == [razon]
+
+
+def test_limpia_el_guion_de_dialogo_que_nllb_antepone():
+    from interpreter.stages.backends import clean_translation
+
+    assert clean_translation("- Bye, then.") == "Bye, then."
+    assert clean_translation("— Hello!") == "Hello!"
+    assert clean_translation("Well-known plan - done") == "Well-known plan - done"
+    assert clean_translation("  Good day to you!  ") == "Good day to you!"
+
+
+def test_prepare_reference_recorta_a_diez_segundos_de_voz(tmp_path, monkeypatch):
+    import soundfile as sf
+
+    from interpreter.stages.backends import prepare_reference
+
+    monkeypatch.setenv("INTERPRETER_HOME", str(tmp_path))
+    sr = 16000
+    silencio = np.zeros(sr * 2, dtype=np.float32)
+    t = np.arange(sr * 25) / sr
+    voz = (0.2 * np.sin(2 * np.pi * 180 * t)).astype(np.float32)
+    sf.write(tmp_path / "larga.wav", np.concatenate([silencio, voz]), sr)
+    corta = prepare_reference(tmp_path / "larga.wav", seconds=10.0)
+    data, sr_out = sf.read(corta)
+    assert sr_out == sr and 9.9 < len(data) / sr < 10.1  # sin los 2 s de silencio inicial
+    assert float(np.max(np.abs(data[: sr // 2]))) > 0.1

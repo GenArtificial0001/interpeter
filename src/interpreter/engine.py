@@ -52,7 +52,7 @@ class EngineConfig:
     anti_echo: bool = True  # ignorar frases que empiezan mientras suena la traducción (evita bucles de eco)
     accelerator: str = "auto"  # "auto" (GPU Intel con OpenVINO si existe) | "cpu"
     beams: int = 1
-    tts_profile: str = "fast"  # "fast" (sin clonar) | "clone" (XTTSv2)
+    tts_profile: str = "fast"  # "fast" (sin clonar) | "clone_fast" (YourTTS) | "clone" (XTTSv2)
     reference_wav: str | None = None
     vad_mode: str = "auto"  # "auto" (umbral adaptativo al ruido del micrófono) | "fixed"
     vad_threshold_db: float = -42.0  # solo se usa con vad_mode="fixed"
@@ -79,6 +79,17 @@ class EngineEvents:
 Backends = tuple[STTBackend, MTBackend, TTSBackend]
 
 
+CLONE_PROFILES = ("clone_fast", "clone")  # YourTTS (rápido) y XTTSv2 (alta calidad, lento)
+
+
+def default_reference() -> str | None:
+    """Muestra de voz grabada con la app (``<datos>/voices/mi_voz.wav``), si existe."""
+    from .stages.backends import app_home
+
+    path = app_home() / "voices" / "mi_voz.wav"
+    return str(path) if path.is_file() else None
+
+
 def make_stt(cfg: EngineConfig) -> STTBackend:
     """Whisper con el codificador en la GPU Intel (OpenVINO) si está; si no, o si falla, en CPU."""
     from .stages.backends import OVWhisperSTT, WhisperSTT, openvino_devices
@@ -97,15 +108,17 @@ def default_backends(cfg: EngineConfig) -> Backends:
         MMSTTS,
         NLLBTranslator,
         XTTSClone,
+        YourTTSClone,
         models_ready_marker,
     )
 
     stt = make_stt(cfg)
     mt = NLLBTranslator(cfg.mt_model, cfg.threads, cfg.quantize, cfg.beams)
-    if cfg.tts_profile == "clone":
-        if not cfg.reference_wav:
-            raise EngineError("El perfil clonado necesita una muestra de tu voz (wav).")
-        tts: TTSBackend = XTTSClone(cfg.reference_wav)
+    if cfg.tts_profile in CLONE_PROFILES:
+        reference = cfg.reference_wav or default_reference()
+        if not reference:
+            raise EngineError("El perfil clonado necesita una muestra de tu voz: usa «Grabar mi voz…».")
+        tts: TTSBackend = YourTTSClone(reference) if cfg.tts_profile == "clone_fast" else XTTSClone(reference)
     else:
         tts = MMSTTS()
     # Cargaron bien: a partir de ahora el arranque no necesita red.
@@ -167,7 +180,7 @@ class Engine:
                 try:
                     self._backends = self._backend_factory(self.config)
                 except Exception as exc:
-                    if self.config.tts_profile != "clone":
+                    if self.config.tts_profile not in CLONE_PROFILES:
                         raise
                     # El perfil clonado es opcional: si no se puede cargar, no dejar la app atascada.
                     log.warning("El perfil clonado no se pudo cargar: %s", exc, exc_info=exc)
