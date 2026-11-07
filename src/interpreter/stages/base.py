@@ -1,0 +1,84 @@
+"""Interfaces de las etapas de IA. Cada backend (real o de prueba) las implementa."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from time import perf_counter
+
+import numpy as np
+
+from ..messages import AudioChunk, SpeechSegment, Transcript, Translation
+
+
+class STTBackend(ABC):
+    """Voz -> texto en el idioma de entrada fijado por el usuario."""
+
+    @abstractmethod
+    def transcribe(self, audio: np.ndarray, sample_rate: int, language: str) -> str: ...
+
+
+class MTBackend(ABC):
+    """Texto -> texto entre dos idiomas (códigos ISO 639-1: es, en, pt, fr)."""
+
+    @abstractmethod
+    def translate(self, text: str, source: str, target: str) -> str: ...
+
+
+class TTSBackend(ABC):
+    """Texto -> audio. ``synthesize`` puede producir varios trozos (streaming)."""
+
+    sample_rate: int
+
+    @abstractmethod
+    def synthesize(self, text: str, language: str) -> Iterator[np.ndarray]: ...
+
+
+# --- Adaptadores a "etapas" del StageRunner -------------------------------------------------------
+
+
+class STTStage:
+    name = "stt"
+
+    def __init__(self, backend: STTBackend, language: str) -> None:
+        self.backend = backend
+        self.language = language
+
+    def process(self, seg: SpeechSegment) -> Iterator[Transcript]:
+        t0 = perf_counter()
+        text = self.backend.transcribe(seg.audio, seg.sample_rate, self.language).strip()
+        seg.timings.stt = perf_counter() - t0
+        seg.timings.stt_done_at = perf_counter()
+        if text:
+            yield Transcript(text, self.language, seg.generation, seg.timings)
+
+
+class MTStage:
+    name = "mt"
+
+    def __init__(self, backend: MTBackend, target: str) -> None:
+        self.backend = backend
+        self.target = target
+
+    def process(self, tr: Transcript) -> Iterator[Translation]:
+        t0 = perf_counter()
+        text = self.backend.translate(tr.text, tr.language, self.target).strip()
+        tr.timings.mt = perf_counter() - t0
+        tr.timings.mt_done_at = perf_counter()
+        if text:
+            yield Translation(text, tr.language, self.target, tr.generation, tr.timings)
+
+
+class TTSStage:
+    name = "tts"
+
+    def __init__(self, backend: TTSBackend) -> None:
+        self.backend = backend
+
+    def process(self, tl: Translation) -> Iterator[AudioChunk]:
+        first = True
+        for audio in self.backend.synthesize(tl.text, tl.target_language):
+            if first:
+                tl.timings.tts_first_audio = tl.timings.e2e()
+            yield AudioChunk(audio, self.backend.sample_rate, tl.generation, first, tl.timings)
+            first = False

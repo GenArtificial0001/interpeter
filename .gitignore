@@ -1,0 +1,41 @@
+# Entorno y caché de Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Secretos / entorno
+.env
+*.pem
+*.key
+keys/
+
+# Modelos, perfiles de voz y datos locales (nunca se versionan)
+models/
+data/
+*.wav
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.bin
+
+# Builds
+build/
+dist/
+*.exe
+*.spec
+
+# Repos de referencia descargados (solo lectura, local)
+seamless_communication-main/
+speech-to-speech-main/
+*.zip
+
+# Sistema / IDE
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
