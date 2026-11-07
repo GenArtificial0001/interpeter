@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Instalar (torch CPU, sin modelos)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[ml,ui,dev]"
+      - name: ruff
+        run: ruff check src tests
+      - name: mypy
+        run: mypy src --ignore-missing-imports
+      - name: pytest (los tests con modelos se omiten)
+        run: pytest -p no:warnings
+
+  build-exe:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Instalar
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[ml,ui,dev]"
+      - name: Empaquetar
+        run: >
+          pyinstaller --noconfirm --clean --windowed --name Interpreter --paths src
+          --collect-submodules interpreter --collect-all transformers --collect-data sentencepiece
+          --hidden-import scipy.signal --exclude-module matplotlib --exclude-module tkinter
+          --distpath build/dist --workpath build/work --specpath build src/interpreter/__main__.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Interpreter-windows
+          path: build/dist/Interpreter
+          retention-days: 14

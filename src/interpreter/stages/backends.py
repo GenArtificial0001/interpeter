@@ -7,6 +7,7 @@ Los modelos se descargan a ``models/hf`` (ignorado por git) y después funcionan
 from __future__ import annotations
 
 import os
+import sys
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -16,12 +17,28 @@ import numpy as np
 
 from .base import MTBackend, STTBackend, TTSBackend
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+def app_home() -> Path:
+    """Carpeta de datos de la app (modelos y perfiles de voz).
+
+    - ``INTERPRETER_HOME`` si está definida.
+    - Ejecutable empaquetado: ``%LOCALAPPDATA%\\Interpreter`` (no dentro de la carpeta de la app).
+    - Desarrollo: la raíz del proyecto.
+    """
+    override = os.environ.get("INTERPRETER_HOME")
+    if override:
+        return Path(override)
+    if getattr(sys, "frozen", False):
+        return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Interpreter"
+    return Path(__file__).resolve().parents[3]
+
+
+PROJECT_ROOT = app_home()
 
 
 def use_local_model_cache() -> Path:
-    """Dirige la caché de Hugging Face a ``models/hf`` dentro del proyecto."""
-    cache = PROJECT_ROOT / "models" / "hf"
+    """Dirige la caché de Hugging Face a ``models/hf`` dentro de la carpeta de datos de la app."""
+    cache = app_home() / "models" / "hf"
     cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("HF_HOME", str(cache))
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
@@ -165,7 +182,7 @@ class XTTSClone(TTSBackend):
                 "Si la aceptas, exporta COQUI_TOS_AGREED=1 y vuelve a ejecutar."
             )
         use_local_model_cache()
-        os.environ.setdefault("COQUI_TTS_HOME", str(PROJECT_ROOT / "models" / "tts"))
+        os.environ.setdefault("COQUI_TTS_HOME", str(app_home() / "models" / "tts"))
         warnings.filterwarnings("ignore")
         from TTS.api import TTS  # type: ignore[import-not-found]
 
