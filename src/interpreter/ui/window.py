@@ -21,12 +21,13 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from ..audio.calibrate import LoopbackReport, run_loopback_test
-from ..audio.devices import AudioDevice, list_devices
+from ..audio.devices import AudioDevice, device_signature, scan_devices
 from ..audio.voice_sample import record
 from ..engine import (
     LANGUAGES,
@@ -61,6 +62,8 @@ STT_MODELS = [
 ACCELERATORS = [("Automática (GPU Intel si hay)", "auto"), ("Solo CPU", "cpu")]
 
 # (texto, milisegundos de silencio que cierran una frase)
+DEVICE_POLL_MS = 3000  # cada cuánto se revisan los dispositivos de audio
+
 PAUSES = [("Rápida · 320 ms", 320), ("Normal · 480 ms", 480), ("Lenta · 700 ms", 700)]
 
 EngineBuilder = Callable[[EngineConfig, EngineEvents], Engine]
@@ -115,13 +118,15 @@ class MainWindow(QMainWindow):
         settings: QSettings | None = None,
         recorder: Callable[..., tuple] = record,
         loop_runner: Callable[..., LoopbackReport] = run_loopback_test,
+        device_scanner: Callable[[], tuple[list[AudioDevice], list[AudioDevice]]] = scan_devices,
     ) -> None:
         super().__init__()
+        self._device_scanner = device_scanner
+        self._audio_busy = False  # prueba de bucle o grabación en curso: no tocar PortAudio
         self._recorder = recorder
         self._loop_runner = loop_runner
         self.setWindowTitle("Interpreter")
-        self.resize(760, 760)
-        self.setMinimumSize(640, 640)
+        self.setMinimumSize(620, 420)  # el contenido hace scroll si no cabe; nada se aplasta
         self.setStyleSheet(theme.STYLESHEET)
 
         self._settings = settings or QSettings("Interpreter", "Interpreter")
@@ -141,12 +146,17 @@ class MainWindow(QMainWindow):
 
         self.engine = engine_builder(EngineConfig(), self._bridge.events())
         self._build_ui()
+        self._fit_initial_size()
         self._load_devices()
         self._restore_settings()
 
         self._meter_timer = QTimer(self)
         self._meter_timer.timeout.connect(self._tick_meter)
         self._meter_timer.start(40)
+
+        self._device_timer = QTimer(self)
+        self._device_timer.timeout.connect(self._poll_devices)
+        self._device_timer.start(DEVICE_POLL_MS)
 
         self._on_state(EngineState.IDLE, "")
         if load_on_start:
@@ -157,7 +167,12 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         root = QWidget()
         root.setObjectName("root")
-        self.setCentralWidget(root)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(root)
+        self.setCentralWidget(scroll)
         outer = QVBoxLayout(root)
         outer.setContentsMargins(24, 20, 24, 20)
         outer.setSpacing(14)
@@ -253,6 +268,7 @@ class MainWindow(QMainWindow):
         self.lbl_loop = QLabel("")
         self.lbl_loop.setObjectName("muted")
         self.lbl_loop.setWordWrap(True)
+        self.lbl_loop.hide()
         audio_lay.addWidget(self.lbl_loop)
         outer.addWidget(audio_card)
 
@@ -289,6 +305,7 @@ class MainWindow(QMainWindow):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(300)
+        self.log.setMinimumHeight(140)
         log_lay.addWidget(self.log, 1)
         outer.addWidget(log_card, 1)
 
@@ -332,6 +349,12 @@ class MainWindow(QMainWindow):
         self.cmb_profile.currentIndexChanged.connect(self._on_profile_changed)
         self._sync_profile_widgets()
 
+    def _fit_initial_size(self) -> None:
+        """Abre con todo el contenido visible si la pantalla lo permite; si no, con scroll."""
+        content = self.centralWidget().widget().sizeHint().height() + 8  # type: ignore[attr-defined]
+        screen = self.screen().availableGeometry().height() if self.screen() else 900
+        self.resize(780, max(480, min(content, screen - 80)))
+
     @staticmethod
     def _muted_label(text: str) -> QLabel:
         lab = QLabel(text)
@@ -342,17 +365,58 @@ class MainWindow(QMainWindow):
 
     def _load_devices(self) -> None:
         try:
-            self._inputs = list_devices("input")
-            self._outputs = list_devices("output")
+            self._inputs, self._outputs = self._device_scanner()
         except Exception as exc:  # noqa: BLE001 - sin sounddevice o sin dispositivos
             log.warning("No se pudieron listar los dispositivos: %s", exc)
             self._inputs, self._outputs = [], []
+        self._fill_device_combos()
+        if not self._inputs or not self._outputs:
+            self._show_warning("No se encontraron dispositivos de audio.")
+
+    def _fill_device_combos(self) -> None:
+        """Rellena las listas conservando, por nombre, lo que el usuario tenía elegido."""
         for combo, devices in ((self.cmb_input, self._inputs), (self.cmb_output, self._outputs)):
+            keep = combo.currentText()
+            combo.blockSignals(True)
             combo.clear()
             for d in devices:
                 combo.addItem(d.name, d.index)
-        if not self._inputs or not self._outputs:
-            self._show_warning("No se encontraron dispositivos de audio.")
+            idx = combo.findText(keep) if keep else -1
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.blockSignals(False)
+        self._check_devices()
+
+    def _poll_devices(self) -> None:
+        """Detecta dispositivos conectados o desconectados mientras la app está abierta."""
+        busy = self._audio_busy or self.engine.state in (EngineState.RUNNING, EngineState.LOADING)
+        if busy:  # reiniciar PortAudio con un stream abierto lo rompería
+            return
+        try:
+            inputs, outputs = self._device_scanner()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("No se pudo refrescar la lista de dispositivos: %s", exc)
+            return
+        before = set(device_signature(self._inputs)) | set(device_signature(self._outputs))
+        after = set(device_signature(inputs)) | set(device_signature(outputs))
+        if device_signature(inputs) == device_signature(self._inputs) and device_signature(
+            outputs
+        ) == device_signature(self._outputs):
+            return
+        chosen_in, chosen_out = self.cmb_input.currentText(), self.cmb_output.currentText()
+        self._inputs, self._outputs = inputs, outputs
+        self._fill_device_combos()
+        for name in sorted(after - before):
+            self._log("🔌", f"Dispositivo conectado: {name}")
+        for name in sorted(before - after):
+            self._log("🔌", f"Dispositivo desconectado: {name}")
+        for label, chosen, combo in (
+            ("micrófono", chosen_in, self.cmb_input),
+            ("salida", chosen_out, self.cmb_output),
+        ):
+            if chosen and combo.findText(chosen) >= 0 and combo.currentText() != chosen:
+                combo.setCurrentIndex(combo.findText(chosen))
+            elif chosen and combo.currentText() != chosen:
+                self._show_warning(f"Se desconectó el {label} «{chosen}»; se eligió «{combo.currentText()}».")
 
     def _restore_settings(self) -> None:
         s = self._settings
@@ -464,7 +528,12 @@ class MainWindow(QMainWindow):
             app_home() / "voices" / "mi_voz.wav",
             recorder=self._recorder,
         )
-        if dlg.exec() and dlg.saved_path is not None:
+        self._audio_busy = True
+        try:
+            accepted = dlg.exec()
+        finally:
+            self._audio_busy = False
+        if accepted and dlg.saved_path is not None:
             self._set_reference(str(dlg.saved_path))
 
     def _set_reference(self, path: str) -> None:
@@ -477,11 +546,12 @@ class MainWindow(QMainWindow):
 
     def _run_loop_test(self) -> None:
         if self.engine.state is EngineState.RUNNING:
-            self.lbl_loop.setText("Detén la interpretación antes de probar el bucle.")
+            self._set_loop_text("Detén la interpretación antes de probar el bucle.")
             return
         out, inp = self.cmb_output.currentData(), self.cmb_input.currentData()
+        self._audio_busy = True
         self.btn_loop.setEnabled(False)
-        self.lbl_loop.setText("Sonará un tono breve por la salida elegida…")
+        self._set_loop_text("Sonará un tono breve por la salida elegida…")
 
         def work() -> None:
             try:
@@ -493,14 +563,19 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=work, name="loop-test", daemon=True).start()
 
+    def _set_loop_text(self, text: str) -> None:
+        self.lbl_loop.setText(text)
+        self.lbl_loop.setVisible(bool(text))
+
     def _on_loop_result(self, report: object) -> None:
+        self._audio_busy = False
         self.btn_loop.setEnabled(True)
         if report is None:
-            self.lbl_loop.setText("")
+            self._set_loop_text("")
             return
         r: LoopbackReport = report  # type: ignore[assignment]
         mark = "✓" if r.verdict == "ok" else "⚠"
-        self.lbl_loop.setText(
+        self._set_loop_text(
             f"{mark} {r.advice}  (tono {r.tone_dbfs:.0f} dBFS · relación señal/ruido {r.snr_db:.0f} dB)"
         )
 

@@ -57,3 +57,25 @@ def find_device(devices: list[AudioDevice], fragment: str) -> AudioDevice | None
 def same_physical_device(a: AudioDevice, b: AudioDevice) -> bool:
     """Entrada y salida del mismo dispositivo provocarían realimentación: la UI debe avisar."""
     return a.index == b.index or a.name == b.name
+
+
+def refresh_devices() -> None:
+    """Reinicia PortAudio para que vea dispositivos conectados o desconectados después de arrancar.
+
+    PortAudio guarda la lista al inicializarse. Solo es seguro llamarlo sin ningún stream abierto.
+    """
+    import sounddevice as sd
+
+    sd._terminate()  # noqa: SLF001 - API privada, es el mecanismo conocido para refrescar la lista
+    sd._initialize()  # noqa: SLF001
+
+
+def scan_devices() -> tuple[list[AudioDevice], list[AudioDevice]]:
+    """Refresca y devuelve ``(entradas, salidas)``."""
+    refresh_devices()
+    return list_devices("input"), list_devices("output")
+
+
+def device_signature(devices: list[AudioDevice]) -> tuple[str, ...]:
+    """Huella de una lista (por nombre y orden) para detectar cambios sin depender de los índices."""
+    return tuple(d.name for d in devices)

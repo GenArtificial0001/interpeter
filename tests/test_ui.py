@@ -177,3 +177,95 @@ def test_grabar_muestra_de_voz_guarda_y_fija_la_referencia(app, settings, tmp_pa
     assert "mi_voz.wav" in win.lbl_ref.text()
     assert not win.lbl_ref.isHidden()
     win.close()
+
+
+# -- detección de dispositivos conectados con la app abierta -----------------------------------------
+
+
+def _dev(i, name):
+    from interpreter.audio.devices import AudioDevice
+
+    return AudioDevice(i, name, "Windows WASAPI", 1, 1, 48000.0)
+
+
+def _scanner(estado):
+    """Escáner falso: ``estado['in']`` y ``estado['out']`` son las listas actuales; cuenta las llamadas."""
+
+    def scan():
+        estado["llamadas"] = estado.get("llamadas", 0) + 1
+        return list(estado["in"]), list(estado["out"])
+
+    return scan
+
+
+def test_detecta_un_auricular_conectado_con_la_app_abierta(app, settings):
+    estado = {"in": [_dev(1, "Micrófono")], "out": [_dev(2, "Altavoces")]}
+    win = MainWindow(_builder, settings=settings, device_scanner=_scanner(estado))
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert win.cmb_input.count() == 1 and win.cmb_output.count() == 1
+
+    estado["in"].append(_dev(3, "Headset (WL5024)"))
+    estado["out"].append(_dev(4, "Headphones (WL5024)"))
+    win._poll_devices()
+
+    assert [win.cmb_input.itemText(i) for i in range(win.cmb_input.count())] == [
+        "Micrófono",
+        "Headset (WL5024)",
+    ]
+    assert win.cmb_output.findText("Headphones (WL5024)") >= 0
+    assert "Dispositivo conectado: Headset (WL5024)" in win.log.toPlainText()
+    win.close()
+
+
+def test_conserva_la_seleccion_al_cambiar_la_lista(app, settings):
+    estado = {"in": [_dev(1, "Micrófono"), _dev(3, "Headset (WL5024)")], "out": [_dev(2, "Altavoces")]}
+    win = MainWindow(_builder, settings=settings, device_scanner=_scanner(estado))
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.cmb_input.setCurrentIndex(win.cmb_input.findText("Headset (WL5024)"))
+    estado["out"].append(_dev(4, "Headphones (WL5024)"))
+    win._poll_devices()
+    assert win.cmb_input.currentText() == "Headset (WL5024)"
+    win.close()
+
+
+def test_aviso_si_se_desconecta_el_dispositivo_elegido(app, settings):
+    estado = {"in": [_dev(1, "Micrófono"), _dev(3, "Headset (WL5024)")], "out": [_dev(2, "Altavoces")]}
+    win = MainWindow(_builder, settings=settings, device_scanner=_scanner(estado))
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.cmb_input.setCurrentIndex(win.cmb_input.findText("Headset (WL5024)"))
+    estado["in"] = [_dev(1, "Micrófono")]
+    win._poll_devices()
+    assert win.cmb_input.currentText() == "Micrófono"
+    assert not win.lbl_warning.isHidden() and "Headset (WL5024)" in win.lbl_warning.text()
+    assert "Dispositivo desconectado: Headset (WL5024)" in win.log.toPlainText()
+    win.close()
+
+
+def test_no_refresca_los_dispositivos_mientras_interpreta(app, settings):
+    estado = {"in": [_dev(1, "Micrófono")], "out": [_dev(2, "Altavoces")]}
+    win = MainWindow(_builder, settings=settings, device_scanner=_scanner(estado))
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.btn_toggle.click()
+    assert win.engine.state is EngineState.RUNNING
+    llamadas = estado["llamadas"]
+    estado["in"].append(_dev(3, "Headset nuevo"))
+    win._poll_devices()
+    assert (
+        estado["llamadas"] == llamadas and win.cmb_input.count() == 1
+    )  # reiniciar PortAudio rompería el stream
+    win.btn_toggle.click()
+    win._poll_devices()
+    assert win.cmb_input.count() == 2
+    win.close()
+
+
+def test_ventana_chica_usa_scroll_y_no_aplasta_el_contenido(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.resize(700, 500)
+    win.show()  # el área con scroll solo calcula su rango al mostrarse
+    app.processEvents()
+    contenido = win.centralWidget().widget()
+    assert contenido.minimumSizeHint().height() > 500  # no cabe: debe desplazarse
+    assert win.centralWidget().verticalScrollBar().maximum() > 0
+    win.close()

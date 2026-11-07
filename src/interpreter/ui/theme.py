@@ -61,5 +61,11 @@ QPlainTextEdit {{
     background: {SURFACE_2}; border: 1px solid {BORDER}; border-radius: 8px; padding: 8px;
     selection-background-color: {ACCENT_DARK};
 }}
+QScrollArea {{ background: {BG}; border: none; }}
+QScrollBar:vertical {{ background: transparent; width: 12px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: {ACCENT_DARK}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 QToolTip {{ background: {SURFACE_2}; color: {TEXT}; border: 1px solid {BORDER}; }}
 """
