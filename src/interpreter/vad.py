@@ -37,6 +37,40 @@ class EnergyVAD:
         return 20.0 * np.log10(rms) > self.threshold_db
 
 
+class AdaptiveEnergyVAD:
+    """Como ``EnergyVAD`` pero con umbral que sigue el ruido de fondo del micrófono.
+
+    Un umbral fijo falla con micrófonos muy distintos (un auricular Bluetooth puede tener −95 dBFS de
+    ruido y una voz de −45; una laptop −70 de ruido). Aquí el umbral es ``ruido + margen`` limitado al
+    rango ``[min_db, max_db]``. El ruido se aprende solo de tramas sin voz: baja rápido y sube despacio.
+    """
+
+    def __init__(
+        self,
+        margin_db: float = 16.0,
+        min_db: float = -58.0,
+        max_db: float = -36.0,
+        initial_floor_db: float = -70.0,
+    ) -> None:
+        self.margin_db, self.min_db, self.max_db = margin_db, min_db, max_db
+        self.floor_db = initial_floor_db
+
+    @property
+    def threshold_db(self) -> float:
+        return min(self.max_db, max(self.min_db, self.floor_db + self.margin_db))
+
+    def is_speech(self, frame: np.ndarray) -> bool:
+        if frame.size == 0:
+            return False
+        rms = float(np.sqrt(np.mean(np.square(frame, dtype=np.float64))))
+        db = 20.0 * float(np.log10(max(rms, 1e-9)))
+        voiced = db > self.threshold_db
+        if not voiced:
+            rate = 0.2 if db < self.floor_db else 0.01  # baja rápido, sube despacio
+            self.floor_db += rate * (db - self.floor_db)
+        return voiced
+
+
 @dataclass(slots=True)
 class VadConfig:
     sample_rate: int = 16000

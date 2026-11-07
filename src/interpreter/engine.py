@@ -18,7 +18,7 @@ from .audio.io import MicCapture, Player
 from .messages import SpeechSegment
 from .pipeline import Pipeline, UtteranceMetrics
 from .stages.base import MTBackend, STTBackend, TTSBackend
-from .vad import EnergyVAD, Segmenter, VadConfig
+from .vad import AdaptiveEnergyVAD, EnergyVAD, Segmenter, VadConfig
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +51,8 @@ class EngineConfig:
     beams: int = 1
     tts_profile: str = "fast"  # "fast" (sin clonar) | "clone" (XTTSv2)
     reference_wav: str | None = None
-    vad_threshold_db: float = -42.0
+    vad_mode: str = "auto"  # "auto" (umbral adaptativo al ruido del micrófono) | "fixed"
+    vad_threshold_db: float = -42.0  # solo se usa con vad_mode="fixed"
     pause_ms: int = 480  # pausa que cierra una frase: menor = menos retraso, pero frases más cortas
     threads: int | None = None
 
@@ -67,6 +68,7 @@ class EngineEvents:
     on_metrics: Callable[[UtteranceMetrics], None] = _noop
     on_original: Callable[[str], None] = _noop
     on_translation: Callable[[str], None] = _noop
+    on_segment: Callable[[float], None] = _noop  # duración (s) de cada frase que el detector de voz cerró
     on_error: Callable[[str], None] = _noop
 
 
@@ -202,10 +204,11 @@ class Engine:
                 on_transcript=self.events.on_original,
                 on_translation=self.events.on_translation,
             )
-            segmenter = Segmenter(
-                EnergyVAD(cfg.vad_threshold_db), VadConfig(end_silence_ms=max(160, cfg.pause_ms))
+            classifier = AdaptiveEnergyVAD() if cfg.vad_mode == "auto" else EnergyVAD(cfg.vad_threshold_db)
+            segmenter = Segmenter(classifier, VadConfig(end_silence_ms=max(160, cfg.pause_ms)))
+            self._player = self._player_factory(
+                cfg.output_device, self._pipeline.get_audio, self.events.on_error
             )
-            self._player = self._player_factory(cfg.output_device, self._pipeline.get_audio)
             self._capture = self._capture_factory(
                 cfg.input_device, segmenter, self._on_segment, self.events.on_level
             )
@@ -256,6 +259,7 @@ class Engine:
         if self.muted or self._pipeline is None:
             return
         self.segments_sent += 1
+        self.events.on_segment(seg.audio.size / seg.sample_rate)
         self._pipeline.submit(seg)
 
 

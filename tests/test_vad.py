@@ -70,3 +70,43 @@ def test_flush_cierra_el_enunciado_en_curso():
     assert seg.in_speech
     assert seg.flush() is not None
     assert not seg.in_speech
+
+
+# -- detector adaptativo ------------------------------------------------------------------------------
+
+
+def _db_tone(db, ms=1000):
+    t = np.arange(SR * ms // 1000) / SR
+    return (np.sqrt(2) * 10 ** (db / 20) * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+
+def _ruido(db, ms, seed=0):
+    return np.random.default_rng(seed).normal(0, 10 ** (db / 20), SR * ms // 1000).astype(np.float32)
+
+
+def test_adaptativo_detecta_voz_baja_con_microfono_muy_silencioso():
+    from interpreter.vad import AdaptiveEnergyVAD
+
+    # auricular Bluetooth: ruido -95 dBFS y voz a -48 dBFS (el umbral fijo de -42 no la vería)
+    seg = Segmenter(AdaptiveEnergyVAD(), VadConfig())
+    audio = np.concatenate([_ruido(-95, 1500), _db_tone(-48, 1200), _ruido(-95, 900, 1)])
+    assert len(seg.feed(audio)) == 1
+    assert Segmenter(EnergyVAD(-42.0), VadConfig()).feed(audio) == []  # el fijo no la detecta
+
+
+def test_adaptativo_no_se_dispara_con_ruido_constante():
+    from interpreter.vad import AdaptiveEnergyVAD
+
+    seg = Segmenter(AdaptiveEnergyVAD(), VadConfig())
+    assert seg.feed(_ruido(-66, 8000)) == []
+
+
+def test_adaptativo_el_umbral_sigue_al_ruido_y_respeta_los_limites():
+    from interpreter.vad import AdaptiveEnergyVAD
+
+    vad = AdaptiveEnergyVAD()
+    for i in range(0, SR * 3, 512):  # 3 s de ruido muy bajo
+        vad.is_speech(_ruido(-100, 32, i)[:512])
+    assert vad.threshold_db == vad.min_db  # nunca por debajo del mínimo
+    vad2 = AdaptiveEnergyVAD(initial_floor_db=-20.0)
+    assert vad2.threshold_db == vad2.max_db  # nunca por encima del máximo

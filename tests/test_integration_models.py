@@ -48,7 +48,7 @@ class FeedCapture:
 class SinkPlayer:
     played: list = []
 
-    def __init__(self, device, get_audio):
+    def __init__(self, device, get_audio, on_error=None):
         self.get_audio = get_audio
         self._run = False
 

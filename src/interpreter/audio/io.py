@@ -105,39 +105,60 @@ class MicCapture:
 
 
 class Player:
-    """Reproduce trozos de audio en orden por el dispositivo elegido."""
+    """Reproduce trozos de audio en orden por el dispositivo elegido.
 
-    def __init__(self, device: int | None, get_audio: Callable[[float], object | None]) -> None:
-        import sounddevice as sd
+    WASAPI en modo compartido solo acepta la frecuencia del dispositivo (normalmente 48 kHz), mientras que
+    las voces sintetizadas salen a 16–24 kHz: cada trozo se remuestrea a la frecuencia del dispositivo.
+    Los errores se informan por ``on_error`` en lugar de matar el hilo en silencio.
+    """
 
-        self._sd = sd
+    def __init__(
+        self,
+        device: int | None,
+        get_audio: Callable[[float], object | None],
+        on_error: Callable[[str], None] | None = None,
+        sd_module: Any = None,
+    ) -> None:
+        if sd_module is None:
+            import sounddevice
+
+            sd_module = sounddevice
+        self._sd = sd_module
         self.device = device
         self._get_audio = get_audio
+        self._on_error = on_error
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.played_chunks = 0
+
+    def _device_rate(self) -> int:
+        info = self._sd.query_devices(self.device if self.device is not None else self._sd.default.device[1])
+        return int(info["default_samplerate"])
 
     def _run(self) -> None:
-        stream = None
-        current_sr = None
+        stream: Any = None
         try:
+            rate = self._device_rate()
+            stream = self._sd.OutputStream(device=self.device, channels=1, samplerate=rate, dtype="float32")
+            stream.start()
             while not self._stop.is_set():
                 chunk = self._get_audio(0.1)
                 if chunk is None:
                     continue
-                if stream is None or current_sr != chunk.sample_rate:  # type: ignore[attr-defined]
-                    if stream is not None:
-                        stream.stop()
-                        stream.close()
-                    current_sr = chunk.sample_rate  # type: ignore[attr-defined]
-                    stream = self._sd.OutputStream(
-                        device=self.device, channels=1, samplerate=current_sr, dtype="float32"
-                    )
-                    stream.start()
-                stream.write(chunk.audio.reshape(-1, 1))  # type: ignore[attr-defined]
+                audio = _resample_audio(chunk.audio, chunk.sample_rate, rate)  # type: ignore[attr-defined]
+                stream.write(audio.reshape(-1, 1))
+                self.played_chunks += 1
+        except Exception as exc:  # noqa: BLE001 - se informa y se registra, no se pierde en silencio
+            log.exception("Fallo del reproductor de audio")
+            if self._on_error is not None:
+                self._on_error(f"No se puede reproducir por la salida elegida: {exc}")
         finally:
             if stream is not None:
-                stream.stop()
-                stream.close()
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:  # noqa: BLE001
+                    log.debug("Error al cerrar el stream de salida", exc_info=True)
 
     def start(self) -> None:
         self._stop.clear()
@@ -148,3 +169,14 @@ class Player:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(2.0)
+
+
+def _resample_audio(audio: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
+    if sr_in == sr_out:
+        return np.ascontiguousarray(audio, dtype=np.float32)
+    from math import gcd
+
+    from scipy.signal import resample_poly
+
+    g = gcd(sr_in, sr_out)
+    return resample_poly(audio, sr_out // g, sr_in // g).astype(np.float32)

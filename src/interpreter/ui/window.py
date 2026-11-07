@@ -83,6 +83,7 @@ class Bridge(QObject):
     translation = Signal(str)
     error = Signal(str)
     loop = Signal(object)
+    segment = Signal(float)
 
     def events(self) -> EngineEvents:
         return EngineEvents(
@@ -91,6 +92,7 @@ class Bridge(QObject):
             on_metrics=self.metrics.emit,
             on_original=self.original.emit,
             on_translation=self.translation.emit,
+            on_segment=self.segment.emit,
             on_error=self.error.emit,
         )
 
@@ -143,6 +145,9 @@ class MainWindow(QMainWindow):
         self._bridge.translation.connect(lambda t: self._log("→", t))
         self._bridge.error.connect(self._on_error)
         self._bridge.loop.connect(self._on_loop_result)
+        self._bridge.segment.connect(
+            lambda sec: self._log("🎙", f"frase detectada ({sec:.1f} s), traduciendo…")
+        )
 
         self.engine = engine_builder(EngineConfig(), self._bridge.events())
         self._build_ui()
