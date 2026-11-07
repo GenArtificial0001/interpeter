@@ -347,3 +347,32 @@ def test_el_motor_pasa_el_manejador_de_errores_a_la_captura():
     recibido["on_error"]("fallo del micrófono")
     assert errores == ["fallo del micrófono"]
     eng.stop()
+
+
+# -- perfil clonado opcional: si no carga, no se atasca la app ----------------------------------------
+
+
+def test_si_el_perfil_clonado_falla_se_usa_la_voz_rapida_y_se_avisa():
+    errores, intentos = [], []
+
+    def fabrica(cfg):
+        intentos.append(cfg.tts_profile)
+        if cfg.tts_profile == "clone":
+            raise RuntimeError("XTTSv2 usa la licencia CPML")
+        return FakeSTT(), FakeMT(), FakeTTS(chunks=1)
+
+    eng = Engine(EngineConfig(tts_profile="clone"), EngineEvents(on_error=errores.append), fabrica)
+    eng.load()
+    assert eng.state is EngineState.READY
+    assert intentos == ["clone", "fast"] and eng.config.tts_profile == "fast"
+    assert len(errores) == 1 and "voz rápida" in errores[0] and "CPML" in errores[0]
+
+
+def test_un_fallo_con_el_perfil_rapido_sigue_siendo_error():
+    def fabrica(cfg):
+        raise RuntimeError("sin memoria")
+
+    eng = Engine(EngineConfig(tts_profile="fast"), backend_factory=fabrica)
+    with pytest.raises(RuntimeError):
+        eng.load()
+    assert eng.state is EngineState.ERROR

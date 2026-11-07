@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import math
+import os
 import statistics
 import threading
 from collections import deque
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -70,6 +73,28 @@ DEVICE_POLL_MS = 3000  # cada cuánto se revisan los dispositivos de audio
 PAUSES = [("Rápida · 320 ms", 320), ("Normal · 480 ms", 480), ("Lenta · 700 ms", 700)]
 
 EngineBuilder = Callable[[EngineConfig, EngineEvents], Engine]
+
+
+def clone_available() -> bool:
+    """¿Está instalado ``coqui-tts`` (XTTSv2) en este entorno?"""
+    return importlib.util.find_spec("TTS") is not None
+
+
+LICENSE_TEXT = (
+    "El perfil clonado usa XTTSv2, con la Coqui Public Model License: solo uso NO comercial.\n\n"
+    "¿Aceptas esos términos? Solo clona voces propias o de personas que lo hayan consentido."
+)
+
+
+def _ask_license(parent: QWidget) -> bool:
+    answer = QMessageBox.question(
+        parent,
+        "Licencia de XTTSv2",
+        LICENSE_TEXT,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    return answer == QMessageBox.StandardButton.Yes
 
 
 def _default_engine(config: EngineConfig, events: EngineEvents) -> Engine:
@@ -126,8 +151,12 @@ class MainWindow(QMainWindow):
         recorder: Callable[..., tuple] = record,
         loop_runner: Callable[..., LoopbackReport] = run_loopback_test,
         device_scanner: Callable[[], tuple[list[AudioDevice], list[AudioDevice]]] = scan_devices,
+        clone_is_available: bool | None = None,
+        license_prompt: Callable[[QWidget], bool] = _ask_license,
     ) -> None:
         super().__init__()
+        self._clone_available = clone_available() if clone_is_available is None else clone_is_available
+        self._license_prompt = license_prompt
         self._device_scanner = device_scanner
         self._devices_initialized = False
         self._audio_busy = False  # prueba de bucle o grabación en curso: no tocar PortAudio
@@ -336,6 +365,15 @@ class MainWindow(QMainWindow):
         self.cmb_profile = QComboBox()
         for code, name in PROFILES.items():
             self.cmb_profile.addItem(name, code)
+        if not self._clone_available:
+            idx = self.cmb_profile.findData("clone")
+            self.cmb_profile.setItemText(idx, "Clonado (no instalado)")
+            self.cmb_profile.model().item(idx).setEnabled(False)  # type: ignore[attr-defined]
+            self.cmb_profile.setItemData(
+                idx,
+                "Necesita coqui-tts (se instala en un entorno aparte) y, en CPU, no llega a tiempo real.",
+                Qt.ItemDataRole.ToolTipRole,
+            )
         self.btn_ref = QPushButton("Elegir .wav…")
         self.btn_ref.setToolTip("Archivo .wav de 20–30 s con tu voz, para el perfil clonado.")
         self.btn_ref.clicked.connect(self._choose_reference)
@@ -464,6 +502,8 @@ class MainWindow(QMainWindow):
             (self.cmb_accel, "accel"),
         ):
             value = str(s.value(key, "", type=str))
+            if key == "profile" and value == "clone" and not self._clone_available:
+                continue  # el último perfil guardado ya no se puede usar: se queda en el rápido
             idx = combo.findData(value)
             if idx < 0 and value.isdigit():  # datos numéricos (p. ej. la pausa) se guardan como texto
                 idx = combo.findData(int(value))
@@ -549,7 +589,28 @@ class MainWindow(QMainWindow):
         if self.engine.state is EngineState.RUNNING:
             self.engine.set_target_language(self.cmb_target.currentData())
 
+    def _accept_license_if_needed(self) -> bool:
+        if self._settings.value("xtts_license_accepted", False, type=bool):
+            os.environ.setdefault("COQUI_TOS_AGREED", "1")
+            return True
+        if self._license_prompt(self):
+            self._settings.setValue("xtts_license_accepted", True)
+            os.environ["COQUI_TOS_AGREED"] = "1"
+            return True
+        return False
+
+    def _set_profile_combo(self, profile: str) -> None:
+        idx = self.cmb_profile.findData(profile)
+        if idx >= 0 and self.cmb_profile.currentIndex() != idx:
+            self.cmb_profile.blockSignals(True)
+            self.cmb_profile.setCurrentIndex(idx)
+            self.cmb_profile.blockSignals(False)
+        self._sync_profile_widgets()
+
     def _on_profile_changed(self) -> None:
+        if self.cmb_profile.currentData() == "clone" and not self._accept_license_if_needed():
+            self._set_profile_combo("fast")  # no aceptó: se queda sin clonar
+            return
         self._sync_profile_widgets()
         if self.engine.state in (EngineState.READY, EngineState.ERROR, EngineState.IDLE):
             self.reload_models()
@@ -666,6 +727,8 @@ class MainWindow(QMainWindow):
         self._log(icono, texto)
 
     def _on_state(self, state: EngineState, detail: str) -> None:
+        if state is EngineState.READY:  # si el motor cayó al perfil rápido, el selector debe reflejarlo
+            self._set_profile_combo(self.engine.config.tts_profile)
         self._pill_state = (state, detail)
         self._render_pill()
         running = state is EngineState.RUNNING

@@ -384,3 +384,76 @@ def test_si_solo_hay_un_equipo_se_mantiene_y_avisa(app, settings):
     assert win.cmb_output.currentText() == "Altavoces (11- Cirrus Logic XU)"
     assert not win.lbl_warning.isHidden()
     win.close()
+
+
+# -- perfil clonado: disponibilidad, licencia y recuperación --------------------------------------------
+
+
+def test_clonado_aparece_desactivado_si_no_esta_instalado(app, settings):
+    win = MainWindow(_builder, settings=settings, clone_is_available=False)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    idx = win.cmb_profile.findData("clone")
+    assert "no instalado" in win.cmb_profile.itemText(idx)
+    assert not win.cmb_profile.model().item(idx).isEnabled()
+    win.close()
+
+
+def test_un_perfil_clonado_guardado_no_se_restaura_si_ya_no_esta_disponible(app, settings):
+    settings.setValue("profile", "clone")
+    win = MainWindow(_builder, settings=settings, clone_is_available=False)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert win.cmb_profile.currentData() == "fast"
+    assert win.btn_toggle.isEnabled()  # el caso de la captura: no queda atascada en error
+    win.close()
+
+
+def test_elegir_clonado_pide_la_licencia_y_la_recuerda(app, settings, monkeypatch):
+    monkeypatch.delenv("COQUI_TOS_AGREED", raising=False)
+    preguntas = []
+    win = MainWindow(
+        _builder,
+        settings=settings,
+        clone_is_available=True,
+        license_prompt=lambda parent: preguntas.append(1) or True,
+    )
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone"))
+    assert len(preguntas) == 1
+    assert settings.value("xtts_license_accepted", False, type=bool) is True
+    import os
+
+    assert os.environ.get("COQUI_TOS_AGREED") == "1"
+    monkeypatch.delenv("COQUI_TOS_AGREED", raising=False)  # que no contamine otras pruebas
+    win.close()
+
+
+def test_rechazar_la_licencia_deja_el_perfil_rapido(app, settings, monkeypatch):
+    monkeypatch.delenv("COQUI_TOS_AGREED", raising=False)
+    win = MainWindow(
+        _builder, settings=settings, clone_is_available=True, license_prompt=lambda parent: False
+    )
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone"))
+    assert win.cmb_profile.currentData() == "fast"
+    assert not settings.value("xtts_license_accepted", False, type=bool)
+    win.close()
+
+
+def test_si_el_motor_cae_al_perfil_rapido_el_selector_lo_refleja(app, settings):
+    def fabrica(config, events):
+        def backends(cfg):
+            if cfg.tts_profile == "clone":
+                raise RuntimeError("coqui-tts no está instalado")
+            return FakeSTT(), FakeMT(), FakeTTS(chunks=1)
+
+        return Engine(config, events, backends, _Cap, _Ply)
+
+    settings.setValue("xtts_license_accepted", True)
+    win = MainWindow(fabrica, settings=settings, clone_is_available=True)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone"))
+    assert pump(app, lambda: win.engine.config.tts_profile == "fast" and win.btn_toggle.isEnabled())
+    pump(app, lambda: win.cmb_profile.currentData() == "fast")
+    assert win.cmb_profile.currentData() == "fast"
+    assert "voz rápida" in win.log.toPlainText()
+    win.close()

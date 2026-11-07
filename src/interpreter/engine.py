@@ -162,7 +162,18 @@ class Engine:
                 return
             self._set_state(EngineState.LOADING, "Cargando modelos…")
             try:
-                self._backends = self._backend_factory(self.config)
+                try:
+                    self._backends = self._backend_factory(self.config)
+                except Exception as exc:
+                    if self.config.tts_profile != "clone":
+                        raise
+                    # El perfil clonado es opcional: si no se puede cargar, no dejar la app atascada.
+                    log.warning("El perfil clonado no se pudo cargar: %s", exc, exc_info=exc)
+                    self.config.tts_profile = "fast"
+                    self.events.on_error(
+                        f"El perfil clonado no está disponible ({exc}). Se usa la voz rápida sin clonar."
+                    )
+                    self._backends = self._backend_factory(self.config)
                 self._warm_up(self._backends)
             except Exception as exc:
                 self._set_state(EngineState.ERROR, "No se pudieron cargar los modelos")
