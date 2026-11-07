@@ -1,6 +1,6 @@
-# Interpreter: micrófono virtual para Teams / Meet web
+# Interpreter: micrófono virtual para Teams, Meet y Zoom web
 
-Hace que **Teams (o Meet) en el navegador** reciba la voz traducida de Interpreter como si fuera tu
+Hace que **Teams, Google Meet o Zoom en el navegador** reciban la voz traducida de Interpreter como si fuera tu
 micrófono. No necesita cable, ni driver, ni permisos de administrador.
 
 ```
@@ -25,7 +25,7 @@ Después de actualizar el código de la extensión, pulsa el botón de recargar 
 1. Abre Interpreter (`Iniciar Interpreter.bat`).
 2. En **Salida** elige **«Micrófono virtual del navegador (Teams web)»**. Debe aparecer
    «Esperando la extensión…» y, al abrir Teams web, **«✓ Navegador conectado (1)»**.
-3. Abre Teams en el navegador (`teams.microsoft.com`) y únete a la reunión. No hace falta elegir el
+3. Abre la reunión en el navegador (Teams: `teams.microsoft.com` o `teams.cloud.microsoft`; Meet: `meet.google.com`; Zoom: «Unirse desde el navegador», `app.zoom.us/wc/…`) y únete. No hace falta elegir el
    micrófono: Teams usará el de Interpreter. En la lista de micrófonos aparece
    **«Interpreter (voz traducida)»**.
 4. Pulsa **Iniciar interpretación** y habla en español.
@@ -58,9 +58,8 @@ por el prototipo, ni por la API antigua). Se ejecuta con:
 .venv-clone\\Scripts\\python.exe scripts\\verify_extension.py --browser chrome
 ```
 
-**Todavía no verificado:** con Teams y Meet reales. No hay informes públicos de que Teams web acepte un
-micrófono sustituido por una extensión; trátalo como una hipótesis que se confirma en la primera reunión de
-prueba. Tampoco se probó la reconexión tras suspender el service worker durante horas.
+**Confirmado en reuniones reales:** Teams web y Google Meet. **Todavía no verificado:** Zoom web y la
+reconexión tras suspender el service worker durante horas.
 
 ## Identificador fijo
 
@@ -73,9 +72,12 @@ conexiones de ese ID: otra extensión, o cualquier página web, es rechazada. Si
 
 | | |
 |---|---|
-| Teams en el navegador (Edge, Chrome) | Sí |
-| Google Meet en el navegador | Sí (misma técnica) |
-| **Teams de escritorio** | **No**: la app de escritorio no es una página web. Para eso hace falta el cable o VB-Cable |
+| Plataforma | Estado |
+|---|---|
+| Teams en el navegador (Edge, Chrome) | Funciona: confirmado en una reunión real (aparece el micrófono y el medidor reacciona) |
+| Google Meet en el navegador | Funciona: confirmado en una reunión real (Meet reconoce «Interpreter (voz traducida)» como micrófono) |
+| Zoom en el navegador («Unirse desde el navegador») | Declarado (`/wc/*`); **sin probar en una reunión real** |
+| **Teams o Zoom de escritorio** | **No**: no son páginas web. Para eso hace falta el cable o VB-Cable |
 
 ## Seguridad
 

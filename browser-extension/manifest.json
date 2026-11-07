@@ -1,12 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Interpreter: micrófono virtual",
-  "version": "0.2.0",
-  "description": "Presenta a Teams/Meet web la voz traducida de Interpreter (app local) como si fuera tu micrófono.",
+  "version": "0.3.0",
+  "description": "Presenta a Teams, Meet y Zoom web la voz traducida de Interpreter (app local) como si fuera tu micrófono.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjPnWZpXi2EDSq61NTekO56ZC9DVqM2VX2FpaFgcnEhvlaYVB1g9P+aIe+XHDSc235g9oh20OuCBjuUAIrydt4fKBxFUp0GB0ryClJaNeIe2FUIZLFbFtLUyXsbKUQD3S5fllekHFiifQV3MhVqYs8nntIgEkYQcnrf8gcg/oDEvV9S9gyR1vlhoM1wkNevrD0rr+BF+7PTLCCgN6h1wHxyjXrPFx9pn7/aYPhMNvuXbvucuWDVfjM5jbNyRWCYBfa1N7vuNtJyhENe78Dij2P5aHXgeRvSnh41CKkfke7+lTmtO1KC0SN9O0N+bgXVtzmuwVxbkbcsrlortN5+5J9wIDAQAB",
   "minimum_chrome_version": "119",
-  "host_permissions": ["ws://127.0.0.1:8765/*"],
-  "background": { "service_worker": "background.js" },
+  "host_permissions": [
+    "ws://127.0.0.1:8765/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -15,9 +19,13 @@
         "https://teams.cloud.microsoft/*",
         "https://*.teams.cloud.microsoft/*",
         "https://teams.live.com/*",
-        "https://meet.google.com/*"
+        "https://meet.google.com/*",
+        "https://*.zoom.us/wc/*",
+        "https://*.zoomgov.com/wc/*"
       ],
-      "js": ["inject.js"],
+      "js": [
+        "inject.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,
@@ -31,9 +39,13 @@
         "https://teams.cloud.microsoft/*",
         "https://*.teams.cloud.microsoft/*",
         "https://teams.live.com/*",
-        "https://meet.google.com/*"
+        "https://meet.google.com/*",
+        "https://*.zoom.us/wc/*",
+        "https://*.zoomgov.com/wc/*"
       ],
-      "js": ["bridge.js"],
+      "js": [
+        "bridge.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,
