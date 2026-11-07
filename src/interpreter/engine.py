@@ -72,7 +72,13 @@ Backends = tuple[STTBackend, MTBackend, TTSBackend]
 
 def default_backends(cfg: EngineConfig) -> Backends:
     """Carga los modelos reales (lento: descarga la primera vez)."""
-    from .stages.backends import MMSTTS, NLLBTranslator, WhisperSTT, XTTSClone
+    from .stages.backends import (
+        MMSTTS,
+        NLLBTranslator,
+        WhisperSTT,
+        XTTSClone,
+        models_ready_marker,
+    )
 
     stt = WhisperSTT(cfg.stt_model, cfg.threads, cfg.quantize)
     mt = NLLBTranslator(cfg.mt_model, cfg.threads, cfg.quantize, cfg.beams)
@@ -82,6 +88,10 @@ def default_backends(cfg: EngineConfig) -> Backends:
         tts: TTSBackend = XTTSClone(cfg.reference_wav)
     else:
         tts = MMSTTS()
+    # Cargaron bien: a partir de ahora el arranque no necesita red.
+    marker = models_ready_marker()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
     return stt, mt, tts
 
 
@@ -116,6 +126,7 @@ class Engine:
 
     def _set_state(self, state: EngineState, detail: str = "") -> None:
         self._state = state
+        log.info("Estado del motor: %s %s", state.value, detail)
         self.events.on_state(state, detail)
 
     def _fail(self, message: str, exc: BaseException | None = None) -> None:

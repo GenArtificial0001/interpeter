@@ -42,7 +42,15 @@ def use_local_model_cache() -> Path:
     cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("HF_HOME", str(cache))
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    if models_ready_marker().exists():
+        # Modelos ya descargados: no consultar Hugging Face (todo local, sin red).
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
     return cache
+
+
+def models_ready_marker() -> Path:
+    """Archivo que indica que los modelos ya se descargaron y cargaron correctamente una vez."""
+    return app_home() / "models" / ".ready"
 
 
 def quantize_int8(model: Any) -> Any:
