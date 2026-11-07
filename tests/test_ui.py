@@ -269,3 +269,44 @@ def test_ventana_chica_usa_scroll_y_no_aplasta_el_contenido(app, settings):
     assert contenido.minimumSizeHint().height() > 500  # no cabe: debe desplazarse
     assert win.centralWidget().verticalScrollBar().maximum() > 0
     win.close()
+
+
+# -- el silencio no puede pasar desapercibido ---------------------------------------------------------
+
+
+def test_silenciar_cambia_el_texto_la_pastilla_y_avisa(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.btn_toggle.click()
+    assert "Interpretando" in win.state_pill.text()
+    win.btn_mute.click()
+    assert win.engine.muted and "SILENCIADO" in win.btn_mute.text()
+    assert "Silenciado" in win.state_pill.text()
+    assert "silenciado" in win.log.toPlainText().lower()
+    win.btn_mute.click()
+    assert not win.engine.muted and win.btn_mute.text() == "Silenciar"
+    assert "Interpretando" in win.state_pill.text()
+    win.btn_toggle.click()
+    win.close()
+
+
+def test_una_frase_ignorada_por_silencio_se_ve_en_la_transcripcion(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.btn_toggle.click()
+    win.btn_mute.click()
+    _Cap.last.on_segment(SpeechSegment(np.zeros(16000, dtype=np.float32)))
+    assert pump(app, lambda: "ignorada" in win.log.toPlainText())
+    assert "reanudar" in win.log.toPlainText()
+    win.btn_toggle.click()
+    win.close()
+
+
+def test_iniciar_estando_silenciado_muestra_un_aviso(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.btn_mute.click()
+    win.btn_toggle.click()
+    assert not win.lbl_warning.isHidden() and "SILENCIADO" in win.lbl_warning.text()
+    win.btn_toggle.click()
+    win.close()

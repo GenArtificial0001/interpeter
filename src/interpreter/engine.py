@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -69,6 +70,7 @@ class EngineEvents:
     on_original: Callable[[str], None] = _noop
     on_translation: Callable[[str], None] = _noop
     on_segment: Callable[[float], None] = _noop  # duración (s) de cada frase que el detector de voz cerró
+    on_dropped: Callable[[str, float], None] = _noop  # (motivo, duración s) de una frase que NO se tradujo
     on_error: Callable[[str], None] = _noop
 
 
@@ -133,6 +135,7 @@ class Engine:
         self._player: Any = None
         self.muted = False
         self.segments_sent = 0
+        self.segments_dropped = 0
 
     # -- estado ------------------------------------------------------------------------------------
 
@@ -200,9 +203,9 @@ class Engine:
                 cfg.source,
                 cfg.target,
                 on_error=lambda stage, exc: self._fail(f"Error en {stage}: {exc}", exc),
-                on_metrics=self.events.on_metrics,
-                on_transcript=self.events.on_original,
-                on_translation=self.events.on_translation,
+                on_metrics=self._on_metrics,
+                on_transcript=self._on_original,
+                on_translation=self._on_translation,
             )
             classifier = AdaptiveEnergyVAD() if cfg.vad_mode == "auto" else EnergyVAD(cfg.vad_threshold_db)
             segmenter = Segmenter(classifier, VadConfig(end_silence_ms=max(160, cfg.pause_ms)))
@@ -255,11 +258,31 @@ class Engine:
     def set_muted(self, muted: bool) -> None:
         self.muted = muted
 
+    def _on_original(self, text: str) -> None:
+        log.info("Reconocido: %s", text)
+        self.events.on_original(text)
+
+    def _on_translation(self, text: str) -> None:
+        log.info("Traducido: %s", text)
+        self.events.on_translation(text)
+
+    def _on_metrics(self, m: UtteranceMetrics) -> None:
+        log.info("Retraso al primer audio: %s s", m.first_audio_from_speech_end)
+        self.events.on_metrics(m)
+
     def _on_segment(self, seg: SpeechSegment) -> None:
-        if self.muted or self._pipeline is None:
+        if self._pipeline is None:
+            return
+        seconds = seg.audio.size / seg.sample_rate
+        if self.muted:
+            # Antes se descartaba sin avisar: ahora se registra y se informa a la interfaz.
+            self.segments_dropped += 1
+            log.info("Frase de %.1f s ignorada: micrófono silenciado", seconds)
+            self.events.on_dropped("silenciado", seconds)
             return
         self.segments_sent += 1
-        self.events.on_segment(seg.audio.size / seg.sample_rate)
+        log.info("Frase detectada: %.1f s", seconds)
+        self.events.on_segment(seconds)
         self._pipeline.submit(seg)
 
 
@@ -272,9 +295,26 @@ class DeviceCheck:
     warnings: list[str] = field(default_factory=list)
 
 
+def _device_tag(name: str) -> str | None:
+    """Etiqueta entre paréntesis al final del nombre (p. ej. ``WL5024``), sin el prefijo numérico."""
+    m = re.search(r"\(([^()]*)\)\s*$", name)
+    if not m:
+        return None
+    tag = re.sub(r"^\d+\s*-\s*", "", m.group(1)).strip().lower()
+    return tag or None
+
+
 def check_devices(input_name: str | None, output_name: str | None) -> DeviceCheck:
     """Avisos de configuración de audio para mostrar en la interfaz."""
     warnings: list[str] = []
-    if input_name and output_name and input_name == output_name:
-        warnings.append("La entrada y la salida son el mismo dispositivo: provocaría realimentación.")
+    if input_name and output_name:
+        same_name = input_name == output_name
+        tag_in, tag_out = _device_tag(input_name), _device_tag(output_name)
+        same_gear = same_name or (tag_in is not None and tag_in == tag_out)
+        if same_gear:
+            warnings.append(
+                "El micrófono y la salida son del mismo equipo: si es un auricular Bluetooth, Windows lo "
+                "pasa a modo manos libres al abrir el micrófono y puede dejar la salida muda o con mala "
+                "calidad; si son los altavoces de la laptop, habrá eco. Usa dispositivos distintos."
+            )
     return DeviceCheck(ok=not warnings, warnings=warnings)

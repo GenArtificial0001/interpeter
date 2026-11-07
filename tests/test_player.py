@@ -1,6 +1,7 @@
 import time
 
 import numpy as np
+import scipy.signal  # noqa: F401  (se precarga: importarlo dentro del hilo bajo carga lo retrasa)
 
 from interpreter.audio.io import Player
 from interpreter.messages import AudioChunk
@@ -56,7 +57,7 @@ def _feeder(chunks):
     return get
 
 
-def _wait(cond, timeout=2.0):
+def _wait(cond, timeout=10.0):
     end = time.time() + timeout
     while time.time() < end:
         if cond():

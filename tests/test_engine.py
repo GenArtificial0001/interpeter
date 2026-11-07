@@ -255,3 +255,60 @@ def test_el_estado_listo_informa_el_dispositivo():
     )
     eng.load()
     assert estados[-1] == (EngineState.READY, "Listo · reconocimiento en GPU")
+
+
+# -- silencio visible y avisos de dispositivos -------------------------------------------------------
+
+
+def test_una_frase_silenciada_se_informa_en_vez_de_perderse():
+    caidas, enviadas = [], []
+    ev = EngineEvents(
+        on_dropped=lambda motivo, s: caidas.append((motivo, round(s, 1))), on_segment=enviadas.append
+    )
+    eng, h = make(ev)
+    eng.load()
+    eng.start()
+    eng.set_muted(True)
+    h["cap"].on_segment(seg())
+    assert caidas == [("silenciado", 1.0)] and enviadas == []
+    assert eng.segments_dropped == 1 and eng.segments_sent == 0
+    eng.set_muted(False)
+    h["cap"].on_segment(seg())
+    assert wait_for(lambda: enviadas == [1.0])
+    eng.stop()
+
+
+def test_el_motor_registra_cada_etapa_en_el_log(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="interpreter.engine")
+    eng, h = make()
+    eng.load()
+    eng.start()
+    h["cap"].on_segment(seg())
+    assert wait_for(lambda: h["ply"].played)
+    eng.stop()
+    texto = caplog.text
+    assert (
+        "Frase detectada" in texto and "Reconocido: hola mundo" in texto and "Traducido: hello world" in texto
+    )
+
+
+def test_aviso_si_micro_y_salida_son_del_mismo_auricular_bluetooth():
+    r = check_devices("Headset (WL5024)", "Headphones (WL5024)")
+    assert not r.ok and "Bluetooth" in r.warnings[0]
+
+
+def test_aviso_de_eco_con_micro_y_altavoces_de_la_laptop():
+    r = check_devices(
+        "Microphone Array on SoundWire Device (9- Cirrus Logic XU)", "Altavoces (11- Cirrus Logic XU)"
+    )
+    assert not r.ok
+
+
+def test_combinaciones_de_equipos_distintos_no_avisan():
+    assert check_devices(
+        "Microphone Array on SoundWire Device (9- Cirrus Logic XU)", "Headphones (WL5024)"
+    ).ok
+    assert check_devices("Headset (WL5024)", "Altavoces (11- Cirrus Logic XU)").ok
+    assert check_devices("Mic USB", "Salida sin etiqueta").ok

@@ -53,6 +53,9 @@ STATE_TEXT = {
     EngineState.ERROR: "Error",
 }
 
+MUTE_OFF_TEXT = "Silenciar"
+MUTE_ON_TEXT = "🔇 SILENCIADO · reanudar"
+
 PROFILES = {"fast": "Rápido (sin clonar)", "clone": "Clonado (XTTSv2, más lento)"}
 
 STT_MODELS = [
@@ -84,6 +87,7 @@ class Bridge(QObject):
     error = Signal(str)
     loop = Signal(object)
     segment = Signal(float)
+    dropped = Signal(str, float)
 
     def events(self) -> EngineEvents:
         return EngineEvents(
@@ -93,6 +97,7 @@ class Bridge(QObject):
             on_original=self.original.emit,
             on_translation=self.translation.emit,
             on_segment=self.segment.emit,
+            on_dropped=self.dropped.emit,
             on_error=self.error.emit,
         )
 
@@ -125,6 +130,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._device_scanner = device_scanner
         self._audio_busy = False  # prueba de bucle o grabación en curso: no tocar PortAudio
+        self._pill_state: tuple[EngineState, str] = (EngineState.IDLE, "")
         self._recorder = recorder
         self._loop_runner = loop_runner
         self.setWindowTitle("Interpreter")
@@ -145,6 +151,7 @@ class MainWindow(QMainWindow):
         self._bridge.translation.connect(lambda t: self._log("→", t))
         self._bridge.error.connect(self._on_error)
         self._bridge.loop.connect(self._on_loop_result)
+        self._bridge.dropped.connect(self._on_dropped)
         self._bridge.segment.connect(
             lambda sec: self._log("🎙", f"frase detectada ({sec:.1f} s), traduciendo…")
         )
@@ -283,9 +290,10 @@ class MainWindow(QMainWindow):
         self.btn_toggle.setObjectName("primary")
         self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_toggle.clicked.connect(self._toggle)
-        self.btn_mute = QPushButton("Silenciar")
+        self.btn_mute = QPushButton(MUTE_OFF_TEXT)
         self.btn_mute.setCheckable(True)
-        self.btn_mute.toggled.connect(self.engine.set_muted)
+        self.btn_mute.setToolTip("Mientras esté activo, lo que digas NO se traduce ni se envía a la llamada.")
+        self.btn_mute.toggled.connect(self._on_mute_toggled)
         ctrl.addWidget(self.btn_toggle, 1)
         ctrl.addWidget(self.btn_mute)
         outer.addLayout(ctrl)
@@ -510,6 +518,11 @@ class MainWindow(QMainWindow):
             self.engine.start()
         except EngineError as exc:
             self._on_error(str(exc))
+            return
+        if self.btn_mute.isChecked():
+            self._show_warning(
+                "El micrófono está SILENCIADO: no se traducirá nada hasta que pulses «reanudar»."
+            )
 
     def _on_target_changed(self) -> None:
         if self.engine.state is EngineState.RUNNING:
@@ -591,14 +604,36 @@ class MainWindow(QMainWindow):
 
     # -- eventos del motor -------------------------------------------------------------------------
 
-    def _on_state(self, state: EngineState, detail: str) -> None:
+    def _render_pill(self) -> None:
+        state, detail = self._pill_state
         text = detail or STATE_TEXT[state]
         color = theme.STATE_COLORS[state.value]
+        if self.engine.muted and state is EngineState.RUNNING:
+            text, color = "Silenciado: no se traduce", theme.WARN
         self.state_pill.setText("● " + text)
         self.state_pill.setStyleSheet(
             f"color:{color}; background:{theme.SURFACE}; border:1px solid {theme.BORDER};"
             "border-radius:14px; padding:6px 12px; font-weight:600;"
         )
+
+    def _on_mute_toggled(self, muted: bool) -> None:
+        self.engine.set_muted(muted)
+        self.btn_mute.setText(MUTE_ON_TEXT if muted else MUTE_OFF_TEXT)
+        self.btn_mute.setStyleSheet(
+            f"background:{theme.WARN}; color:#2a1a00; border:1px solid {theme.WARN}; font-weight:700;"
+            if muted
+            else ""
+        )
+        self._render_pill()
+        if muted:
+            self._log("🔇", "Micrófono silenciado: lo que digas no se traducirá hasta que pulses «reanudar».")
+
+    def _on_dropped(self, reason: str, seconds: float) -> None:
+        self._log("🔇", f"frase de {seconds:.1f} s ignorada ({reason}). Pulsa «reanudar» para traducir.")
+
+    def _on_state(self, state: EngineState, detail: str) -> None:
+        self._pill_state = (state, detail)
+        self._render_pill()
         running = state is EngineState.RUNNING
         ready = state is EngineState.READY
         self.btn_toggle.setEnabled(ready or running)
