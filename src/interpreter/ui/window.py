@@ -31,9 +31,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..audio.calibrate import LoopbackReport, make_tone, run_loopback_test
 from ..audio.devices import AudioDevice, device_signature, scan_devices
 from ..audio.voice_sample import record
+from ..audio.webmic import expected_extension_version
 from ..engine import (
     LANGUAGES,
     Engine,
@@ -195,7 +197,7 @@ class MainWindow(QMainWindow):
         self._pill_state: tuple[EngineState, str] = (EngineState.IDLE, "")
         self._recorder = recorder
         self._loop_runner = loop_runner
-        self.setWindowTitle("Interpreter")
+        self.setWindowTitle(f"Interpreter {__version__}")
         self.setMinimumSize(620, 420)  # el contenido hace scroll si no cabe; nada se aplasta
         self.setStyleSheet(theme.STYLESHEET)
 
@@ -619,10 +621,17 @@ class MainWindow(QMainWindow):
             return
         srv = self.engine.webmic
         connected = srv.clients if srv is not None else 0
+        versions = srv.extension_versions if srv is not None else []
+        suffix = ""
+        if connected:
+            suffix = " · extensión " + (", ".join(f"v{v}" for v in versions) or "anterior a la 0.3.1")
+            latest = expected_extension_version()
+            if latest and versions != [latest]:
+                suffix += f" (la última es v{latest}: recárgala en edge://extensions)"
         if n:
-            text = f"✓ Navegador conectado ({n}): Teams/Meet recibirá la traducción como micrófono."
+            text = f"✓ Navegador conectado ({n}): Teams, Meet o Zoom recibirá la traducción.{suffix}"
         elif connected:
-            text = "La extensión está conectada, pero no hay ninguna pestaña de Teams/Meet abierta."
+            text = f"La extensión está conectada, pero no hay ninguna pestaña de reunión abierta.{suffix}"
         else:
             text = "Esperando la extensión: abre Teams web con la extensión instalada."
         self.lbl_browser.setText(text)
@@ -843,7 +852,9 @@ class MainWindow(QMainWindow):
         )
         self._render_pill()
         self.mute_banner.setVisible(muted)
-        self.setWindowTitle("Interpreter — SILENCIADO" if muted else "Interpreter")
+        self.setWindowTitle(
+            f"Interpreter {__version__} — SILENCIADO" if muted else f"Interpreter {__version__}"
+        )
         if muted:
             self._log("🔇", "Micrófono silenciado: lo que digas no se traducirá hasta que pulses «reanudar».")
 

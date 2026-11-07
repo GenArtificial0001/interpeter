@@ -12,6 +12,7 @@ import numpy as np  # noqa: E402
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from interpreter import __version__  # noqa: E402
 from interpreter.engine import Engine, EngineState  # noqa: E402
 from interpreter.messages import SpeechSegment  # noqa: E402
 from interpreter.stages.fakes import FakeMT, FakeSTT, FakeTTS  # noqa: E402
@@ -318,12 +319,12 @@ def test_iniciar_estando_silenciado_reactiva_el_microfono_y_lo_informa(app, sett
 def test_el_banner_y_el_titulo_siguen_al_silencio(app, settings):
     win = MainWindow(_builder, settings=settings)
     pump(app, lambda: win.btn_toggle.isEnabled())
-    assert win.mute_banner.isHidden() and win.windowTitle() == "Interpreter"
+    assert win.mute_banner.isHidden() and "SILENCIADO" not in win.windowTitle()
     win.btn_mute.click()
     assert not win.mute_banner.isHidden() and "SILENCIADO" in win.windowTitle()
     assert "Silenciado" in win.state_pill.text()  # también en "Listo", no solo interpretando
     win.btn_mute.click()
-    assert win.mute_banner.isHidden() and win.windowTitle() == "Interpreter"
+    assert win.mute_banner.isHidden() and win.windowTitle() == f"Interpreter {__version__}"
     win.close()
 
 
@@ -523,6 +524,7 @@ def test_sin_coqui_los_dos_perfiles_clonados_quedan_desactivados(app, settings):
 class _FakeWebMic:
     def __init__(self, cb):
         self.cb, self.running, self.clients, self.pushes = cb, False, 0, []
+        self.extension_versions: list[str] = []
 
     def start(self):
         self.running = True
@@ -682,4 +684,25 @@ def test_el_boton_de_glosario_existe_y_la_pausa_muy_lenta_tambien(app, settings)
     win = MainWindow(_builder, settings=settings, load_on_start=False)
     assert win.btn_glossary.text().startswith("Glosario")
     assert 1000 in [win.cmb_pause.itemData(i) for i in range(win.cmb_pause.count())]
+    win.close()
+
+
+def test_la_version_se_ve_en_el_titulo_y_la_de_la_extension_en_el_aviso(app, settings):
+    from interpreter import __version__
+
+    holder = {}
+    win = MainWindow(_builder_web(holder), settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert __version__ in win.windowTitle()
+    _choose_browser(win)
+    srv = holder["srv"]
+    srv.clients, srv.extension_versions = 1, []
+    win._on_webmic_clients(1)
+    assert "anterior a la 0.3.1" in win.lbl_browser.text() and "recárgala" in win.lbl_browser.text()
+    from interpreter.audio.webmic import expected_extension_version
+
+    srv.extension_versions = [expected_extension_version()]
+    win._on_webmic_clients(1)
+    assert f"extensión v{expected_extension_version()}" in win.lbl_browser.text()
+    assert "recárgala" not in win.lbl_browser.text()
     win.close()

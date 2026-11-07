@@ -34,7 +34,7 @@ function tabCount() {
 // Interpreter usa este número para saber si alguien reproducirá el audio.
 function reportTabs() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    try { ws.send(JSON.stringify({ type: "tabs", n: tabCount() })); } catch (_) { /* se reintenta al reconectar */ }
+    try { ws.send(JSON.stringify({ type: "tabs", n: tabCount(), v: chrome.runtime.getManifest().version })); } catch (_) { /* se reintenta al reconectar */ }
   }
 }
 

@@ -10,7 +10,8 @@ Protocolo (versión 1)
 - Servidor -> extensión, **texto JSON**: ``{"type": "hello", "version": 1}`` al conectar,
   ``{"type": "flush"}`` cuando hay que vaciar lo pendiente (se interrumpió la interpretación) y
   ``{"type": "ping"}`` cada 20 s (mantiene vivo el service worker MV3, que se duerme a los 30 s).
-- Extensión -> servidor, **texto JSON**: ``{"type": "tabs", "n": N}`` con las pestañas de reunión abiertas.
+- Extensión -> servidor, **texto JSON**: ``{"type": "tabs", "n": N, "v": "0.3.1"}`` con las pestañas de
+  reunión abiertas y la versión de la extensión (``v`` es opcional: las extensiones antiguas no la envían).
 
 Seguridad: la conexión la abre el service worker de la extensión, cuyo ``Origin`` es
 ``chrome-extension://<ID>``; el ID está fijado por la clave del manifest y es el único origen aceptado (las
@@ -24,9 +25,11 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import struct
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -44,6 +47,16 @@ MAX_MESSAGE_BYTES = 2**12
 # Solo se conecta la extensión (su service worker), con el ID fijo que da la clave de su manifest.
 EXTENSION_IDS = frozenset({"lodhkanpadafbgdfgelmeaadelgongkg"})
 DEV_HOSTS = ("localhost", "127.0.0.1")
+
+
+def expected_extension_version() -> str | None:
+    """Versión de la extensión que hay en la carpeta del proyecto (la última), o ``None`` si no está."""
+    manifest = Path(__file__).resolve().parents[3] / "browser-extension" / "manifest.json"
+    try:
+        version = json.loads(manifest.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        return None
+    return version if isinstance(version, str) else None
 
 
 def origin_allowed(
@@ -113,6 +126,7 @@ class WebMicServer:
         self._thread: threading.Thread | None = None
         self._server: Any = None
         self._clients: dict[Any, int | None] = {}  # conexión -> pestañas de reunión (None = no informa)
+        self._versions: dict[Any, str] = {}  # conexión -> versión de la extensión (si la informa)
         self._started = threading.Event()
         self._error: BaseException | None = None
         self.frames_sent = 0
@@ -124,6 +138,11 @@ class WebMicServer:
     def clients(self) -> int:
         """Conexiones abiertas (extensiones), tengan o no pestañas de reunión."""
         return len(self._clients)
+
+    @property
+    def extension_versions(self) -> list[str]:
+        """Versiones que informan las extensiones conectadas (vacía = una anterior, que no informa)."""
+        return sorted(set(self._versions.values()))
 
     @property
     def receivers(self) -> int:
@@ -232,6 +251,7 @@ class WebMicServer:
         finally:
             beat.cancel()
             self._clients.pop(ws, None)
+            self._versions.pop(ws, None)
             self._notify()
 
     def _on_client_message(self, ws: Any, message: Any) -> None:
@@ -243,6 +263,9 @@ class WebMicServer:
             return
         if isinstance(data, dict) and data.get("type") == "tabs":
             n = data.get("n")
+            version = data.get("v")
+            if isinstance(version, str) and re.fullmatch(r"\d{1,4}(\.\d{1,4}){1,3}", version):
+                self._versions[ws] = version
             if isinstance(n, int) and 0 <= n <= 1000:
                 self._clients[ws] = n
                 self._notify()

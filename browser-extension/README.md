@@ -76,8 +76,15 @@ conexiones de ese ID: otra extensión, o cualquier página web, es rechazada. Si
 |---|---|
 | Teams en el navegador (Edge, Chrome) | Funciona: confirmado en una reunión real (aparece el micrófono y el medidor reacciona) |
 | Google Meet en el navegador | Funciona: confirmado en una reunión real (Meet reconoce «Interpreter (voz traducida)» como micrófono) |
-| Zoom en el navegador («Unirse desde el navegador») | Declarado (`/wc/*`); **sin probar en una reunión real** |
+| Zoom en el navegador (`app.zoom.us/wc/…`) | Declarado para `*.zoom.us`; **sin probar en una reunión real** |
 | **Teams o Zoom de escritorio** | **No**: no son páginas web. Para eso hace falta el cable o VB-Cable |
+
+## Versión
+
+La versión de la extensión (la del `manifest.json`) aparece en Interpreter debajo de «Salida», junto a «Navegador
+conectado». Si no coincide con la del proyecto, Interpreter avisa de que hay que **recargarla** en
+`edge://extensions` (Edge no la recarga solo al cambiar los archivos). Las versiones anteriores a la 0.3.1 no
+informan su versión.
 
 ## Seguridad
 

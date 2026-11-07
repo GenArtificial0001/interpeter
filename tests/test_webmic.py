@@ -1,6 +1,7 @@
 import json
 import socket
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -377,3 +378,30 @@ def test_el_latido_mantiene_vivo_al_service_worker():
             assert json.loads(ws.recv(timeout=3)) == {"type": "ping"}
     finally:
         srv.stop()
+
+
+def test_la_version_de_la_extension_se_informa_y_se_olvida_al_desconectar(server):
+    with connect(url(server), origin=EXT_ORIGIN) as ws:
+        ws.recv(timeout=3)
+        assert wait_for(lambda: server.clients == 1)
+        assert server.extension_versions == []  # una extensión antigua no informa su versión
+        ws.send(json.dumps({"type": "tabs", "n": 1, "v": "0.3.1"}))
+        assert wait_for(lambda: server.extension_versions == ["0.3.1"])
+        ws.send(json.dumps({"type": "tabs", "n": 1, "v": "<script>"}))  # basura: se conserva la última buena
+        ws.send(json.dumps({"type": "tabs", "n": 2}))
+        assert wait_for(lambda: server.receivers == 1)
+        assert server.extension_versions == ["0.3.1"]
+    assert wait_for(lambda: server.extension_versions == [])
+
+
+def test_la_version_esperada_sale_del_manifest_del_proyecto():
+    from interpreter.audio.webmic import expected_extension_version
+
+    assert (
+        expected_extension_version()
+        == json.loads(
+            (Path(__file__).resolve().parents[1] / "browser-extension" / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )["version"]
+    )
