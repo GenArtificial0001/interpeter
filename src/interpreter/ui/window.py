@@ -599,11 +599,15 @@ class MainWindow(QMainWindow):
     def _on_webmic_clients(self, n: int) -> None:
         if not self._output_is_browser():
             return
-        self.lbl_browser.setText(
-            f"✓ Navegador conectado ({n})"
-            if n
-            else "Esperando la extensión: abre Teams web con la extensión instalada."
-        )
+        srv = self.engine.webmic
+        connected = srv.clients if srv is not None else 0
+        if n:
+            text = f"✓ Navegador conectado ({n}): Teams/Meet recibirá la traducción como micrófono."
+        elif connected:
+            text = "La extensión está conectada, pero no hay ninguna pestaña de Teams/Meet abierta."
+        else:
+            text = "Esperando la extensión: abre Teams web con la extensión instalada."
+        self.lbl_browser.setText(text)
         self.lbl_browser.setStyleSheet(f"color:{theme.ACCENT};" if n else f"color:{theme.WARN};")
         self.lbl_browser.show()
 

@@ -6,7 +6,6 @@ const WS_URL = "ws://127.0.0.1:8765";
 const ports = new Set();
 let ws = null;
 let retryMs = 1000;
-let connecting = false;
 let connected = false;
 
 function broadcast(msg) {
@@ -22,6 +21,23 @@ function bytesToBase64(bytes) {
   return btoa(s);
 }
 
+// Pestañas distintas con un content script activo (una pestaña puede tener varios frames, y cada uno un puerto).
+function tabCount() {
+  const ids = new Set();
+  for (const p of ports) {
+    const id = p.sender && p.sender.tab ? p.sender.tab.id : null;
+    if (id !== null && id !== undefined) ids.add(id);
+  }
+  return ids.size;
+}
+
+// Interpreter usa este número para saber si alguien reproducirá el audio.
+function reportTabs() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try { ws.send(JSON.stringify({ type: "tabs", n: tabCount() })); } catch (_) { /* se reintenta al reconectar */ }
+  }
+}
+
 function setConnected(v) {
   if (connected === v) return;
   connected = v;
@@ -34,22 +50,23 @@ function scheduleReconnect() {
 }
 
 function connect() {
-  if (connecting || (ws && ws.readyState <= 1)) return;
-  connecting = true;
+  if (ws && ws.readyState <= 1) return; // ya conectado o conectando
+  let me;
   try {
-    ws = new WebSocket(WS_URL);
+    me = ws = new WebSocket(WS_URL);
   } catch (_) {
-    connecting = false;
     scheduleReconnect();
     return;
   }
-  ws.binaryType = "arraybuffer";
-  ws.onopen = () => { connecting = false; retryMs = 1000; setConnected(true); };
-  ws.onmessage = (ev) => {
+  me.binaryType = "arraybuffer";
+  me.onopen = () => { if (me !== ws) return; retryMs = 1000; setConnected(true); reportTabs(); };
+  me.onmessage = (ev) => {
+    if (me !== ws) return;
     if (typeof ev.data === "string") {
       try {
         const m = JSON.parse(ev.data);
         if (m.type === "flush") broadcast({ t: "flush" });
+        // "hello" y "ping" no requieren respuesta: recibirlos ya reinicia el temporizador del service worker
       } catch (_) { /* mensaje de texto no válido: se ignora */ }
       return;
     }
@@ -58,8 +75,13 @@ function connect() {
     const rate = new DataView(ev.data).getUint32(0, true);
     broadcast({ t: "pcm", r: rate, b: bytesToBase64(u8.subarray(4)) });
   };
-  ws.onclose = () => { connecting = false; setConnected(false); scheduleReconnect(); };
-  ws.onerror = () => { try { ws.close(); } catch (_) { /* ya cerrado */ } };
+  me.onclose = () => {
+    if (me !== ws) return; // un socket antiguo no debe pisar el estado del nuevo
+    ws = null;
+    setConnected(false);
+    scheduleReconnect();
+  };
+  me.onerror = () => { try { me.close(); } catch (_) { /* ya cerrado */ } };
 }
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -69,8 +91,9 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener((m) => {
     if (m && m.t === "ping") connect(); // el latido de la pestaña también despierta/reconecta el worker
   });
-  port.onDisconnect.addListener(() => ports.delete(port));
+  port.onDisconnect.addListener(() => { ports.delete(port); reportTabs(); });
   connect();
+  reportTabs();
 });
 
 connect();

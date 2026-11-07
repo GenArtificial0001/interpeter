@@ -95,3 +95,9 @@ app calcula la probabilidad del idioma esperado y la confianza de cada frase y d
 voz en ese idioma, y la casilla **Anti-eco** ignora lo que el micrófono capta mientras suena la
 traducción. Con micrófono y altavoces del mismo equipo (o el mismo auricular Bluetooth) conviene separar
 los dispositivos.
+
+## Teams sin cable: micrófono virtual del navegador
+
+Si usas **Teams o Meet en el navegador**, no hace falta cable ni VB-Cable: en *Salida* elige «Micrófono
+virtual del navegador» e instala la extensión de `browser-extension/` (ver su README). Teams de escritorio
+sigue necesitando el cable (lazo físico en el jack) o VB-Cable.
