@@ -54,6 +54,12 @@ STATE_TEXT = {
 
 PROFILES = {"fast": "Rápido (sin clonar)", "clone": "Clonado (XTTSv2, más lento)"}
 
+STT_MODELS = [
+    ("Rápido · Whisper base", "openai/whisper-base"),
+    ("Preciso · Whisper small", "openai/whisper-small"),
+]
+ACCELERATORS = [("Automática (GPU Intel si hay)", "auto"), ("Solo CPU", "cpu")]
+
 # (texto, milisegundos de silencio que cierran una frase)
 PAUSES = [("Rápida · 320 ms", 320), ("Normal · 480 ms", 480), ("Lenta · 700 ms", 700)]
 
@@ -169,6 +175,7 @@ class MainWindow(QMainWindow):
         head.addStretch()
         self.state_pill = QLabel()
         self.state_pill.setMinimumWidth(150)
+        self.state_pill.setMaximumWidth(360)
         self.state_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
         head.addWidget(self.state_pill)
         outer.addLayout(head)
@@ -304,6 +311,24 @@ class MainWindow(QMainWindow):
         adv.addWidget(self.btn_ref)
         adv.addWidget(self.lbl_ref, 1)
         outer.addLayout(adv)
+
+        rec = QHBoxLayout()
+        self.cmb_stt = QComboBox()
+        for label, model in STT_MODELS:
+            self.cmb_stt.addItem(label, model)
+        self.cmb_accel = QComboBox()
+        for label, code in ACCELERATORS:
+            self.cmb_accel.addItem(label, code)
+        self.cmb_accel.setToolTip(
+            "Con OpenVINO, el reconocimiento usa la GPU de Intel (más rápido). Si falla, cae a la CPU."
+        )
+        rec.addWidget(self._muted_label("Reconocimiento"))
+        rec.addWidget(self.cmb_stt, 1)
+        rec.addWidget(self._muted_label("Aceleración"))
+        rec.addWidget(self.cmb_accel, 1)
+        outer.addLayout(rec)
+        self.cmb_stt.currentIndexChanged.connect(self._on_profile_changed)
+        self.cmb_accel.currentIndexChanged.connect(self._on_profile_changed)
         self.cmb_profile.currentIndexChanged.connect(self._on_profile_changed)
         self._sync_profile_widgets()
 
@@ -336,6 +361,8 @@ class MainWindow(QMainWindow):
             (self.cmb_target, "target"),
             (self.cmb_profile, "profile"),
             (self.cmb_pause, "pause"),
+            (self.cmb_stt, "stt"),
+            (self.cmb_accel, "accel"),
         ):
             value = str(s.value(key, "", type=str))
             idx = combo.findData(value)
@@ -360,6 +387,8 @@ class MainWindow(QMainWindow):
         s.setValue("target", self.cmb_target.currentData())
         s.setValue("profile", self.cmb_profile.currentData())
         s.setValue("pause", self.cmb_pause.currentData())
+        s.setValue("stt", self.cmb_stt.currentData())
+        s.setValue("accel", self.cmb_accel.currentData())
         s.setValue("input", self.cmb_input.currentText())
         s.setValue("output", self.cmb_output.currentText())
         s.setValue("reference", self.engine.config.reference_wav or "")
@@ -380,6 +409,8 @@ class MainWindow(QMainWindow):
     def reload_models(self) -> None:
         cfg = self.engine.config
         cfg.tts_profile = self.cmb_profile.currentData()
+        cfg.stt_model = self.cmb_stt.currentData()
+        cfg.accelerator = self.cmb_accel.currentData()
 
         def work() -> None:
             try:
@@ -502,6 +533,8 @@ class MainWindow(QMainWindow):
             self.cmb_output,
             self.cmb_profile,
             self.cmb_pause,
+            self.cmb_stt,
+            self.cmb_accel,
             self.btn_ref,
             self.btn_rec,
             self.btn_loop,

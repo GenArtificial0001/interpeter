@@ -164,3 +164,94 @@ def test_fallo_del_microfono_vuelve_a_listo():
 def test_aviso_de_realimentacion():
     assert check_devices("Jack", "Jack").warnings
     assert check_devices("Mic USB", "Jack").ok
+
+
+# -- selección del reconocimiento (GPU Intel con respaldo a CPU) ------------------------------------
+
+
+def test_make_stt_usa_openvino_si_hay_gpu(monkeypatch):
+    from interpreter import engine as eng_mod
+    from interpreter.stages import backends
+
+    elegido = {}
+
+    class FakeOV:
+        device = "GPU"
+
+        def __init__(self, model, threads=None, device="GPU", **kw):
+            elegido["ov"] = (model, device)
+
+    monkeypatch.setattr(backends, "openvino_devices", lambda: ["CPU", "GPU", "NPU"])
+    monkeypatch.setattr(backends, "OVWhisperSTT", FakeOV)
+    stt = eng_mod.make_stt(EngineConfig(stt_model="openai/whisper-base"))
+    assert isinstance(stt, FakeOV) and elegido["ov"] == ("openai/whisper-base", "GPU")
+
+
+def test_make_stt_cae_a_cpu_si_openvino_falla(monkeypatch):
+    from interpreter import engine as eng_mod
+    from interpreter.stages import backends
+
+    class Boom:
+        def __init__(self, *a, **k):
+            raise RuntimeError("driver de GPU no disponible")
+
+    class FakeCPU:
+        device = "CPU"
+
+        def __init__(self, model, threads=None, quantize=False):
+            self.quantize = quantize
+
+    monkeypatch.setattr(backends, "openvino_devices", lambda: ["CPU", "GPU"])
+    monkeypatch.setattr(backends, "OVWhisperSTT", Boom)
+    monkeypatch.setattr(backends, "WhisperSTT", FakeCPU)
+    stt = eng_mod.make_stt(EngineConfig())
+    assert isinstance(stt, FakeCPU) and stt.quantize is False
+
+
+def test_make_stt_respeta_solo_cpu(monkeypatch):
+    from interpreter import engine as eng_mod
+    from interpreter.stages import backends
+
+    class NoDebeUsarse:
+        def __init__(self, *a, **k):
+            raise AssertionError("no debía usar OpenVINO")
+
+    class FakeCPU:
+        device = "CPU"
+
+        def __init__(self, *a, **k): ...
+
+    monkeypatch.setattr(backends, "openvino_devices", lambda: ["CPU", "GPU"])
+    monkeypatch.setattr(backends, "OVWhisperSTT", NoDebeUsarse)
+    monkeypatch.setattr(backends, "WhisperSTT", FakeCPU)
+    assert isinstance(eng_mod.make_stt(EngineConfig(accelerator="cpu")), FakeCPU)
+
+
+def test_make_stt_sin_gpu_usa_pytorch(monkeypatch):
+    from interpreter import engine as eng_mod
+    from interpreter.stages import backends
+
+    class FakeCPU:
+        device = "CPU"
+
+        def __init__(self, *a, **k): ...
+
+    monkeypatch.setattr(backends, "openvino_devices", lambda: ["CPU"])
+    monkeypatch.setattr(backends, "WhisperSTT", FakeCPU)
+    assert isinstance(eng_mod.make_stt(EngineConfig()), FakeCPU)
+
+
+def test_el_estado_listo_informa_el_dispositivo():
+    class Dev(FakeSTT):
+        device = "GPU"
+
+    estados = []
+    eng = Engine(
+        EngineConfig(),
+        EngineEvents(on_state=lambda s, d: estados.append((s, d))),
+        lambda cfg: (Dev(), FakeMT(), FakeTTS(chunks=1)),
+        FakeCapture,
+        FakePlayer,
+    )
+    eng.load()
+    assert estados[-1] == (EngineState.READY, "Listo · reconocimiento en GPU")

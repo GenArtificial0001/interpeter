@@ -30,7 +30,7 @@ descarta en lugar de acumular retraso.
 
 ```bash
 python -m venv .venv
-.venv\Scripts\python -m pip install -e ".[ml,ui,dev]"
+.venv\Scripts\python -m pip install -e ".[ml,ui,ov,dev]"
 .venv\Scripts\python -m interpreter          # abre la aplicación
 .venv\Scripts\python -m pytest               # pruebas (sin modelos)
 ```
@@ -52,7 +52,8 @@ app reproduce por la salida del jack y Teams usa como micrófono la entrada del 
 
 | Perfil | Fin de tu frase → primer audio |
 |---|---|
-| Rápido (sin clonar) | ~2,0–2,6 s |
+| Rápido (sin clonar), reconocimiento en la GPU Intel (OpenVINO) | **~1,4 s** |
+| Rápido (sin clonar), solo CPU | ~2,0 s |
 | Clonado (XTTSv2) | ~3,2 s, pero genera 2–2,6× más lento que el habla: no sostenible en CPU |
 
 ## Licencias de los modelos

@@ -110,3 +110,29 @@ Notas del empaquetado: PyInstaller necesita un lanzador con import absoluto (`la
 `sys.stderr` es `None`, por eso `setup_logging` redirige a `logs/console.log`. Los datos van a
 `%LOCALAPPDATA%\Interpreter` (o `INTERPRETER_HOME`). Tras la primera carga se crea `models/.ready` y la app
 deja de consultar Hugging Face.
+
+## Aceleración con OpenVINO (2026-11-07)
+
+`openvino` 2026.2 sí está en el índice de Ford (`openvino-genai` y `optimum` no): se porta a mano el
+**codificador de Whisper** a la GPU Arc 130V; el decodificador, el tokenizador y la generación siguen en
+Transformers. Se valida con `scripts/validate_ov.py` (voz sintética en 4 variantes: normal, rápida, lenta
+y con ruido de 20 dB).
+
+| Configuración (Whisper-base, mediana por frase de 2–7 s) | Tiempo | Transcripciones idénticas a PyTorch |
+|---|---|---|
+| `pipeline` de Transformers en CPU (lo anterior) | 1206 ms | referencia |
+| `generate` directo en CPU (sin la clase `pipeline`) | 541 ms | referencia |
+| **`generate` + codificador OpenVINO en GPU (f16)** | **283 ms** | **24/24** |
+| OpenVINO en CPU | 716 ms | 24/24 (sin ganancia) |
+| Whisper-small con OpenVINO en GPU (f16) | 736 ms | 24/24 (PyTorch: 1648 ms) |
+
+Hallazgos:
+- La clase `pipeline` añadía ~0,6 s de sobrecarga por frase; llamar a `generate` directamente la elimina.
+- El codificador en la GPU pasa de ~260 ms a ~11 ms; el decodificador (~17 ms/token) sigue en CPU y ya
+  domina.
+- La precisión f16 de la GPU no cambió ninguna transcripción; cuantizar el decodificador a int8 sí
+  cambió palabras y no aceleró: descartado. La NPU no compila el codificador (formas dinámicas).
+- Whisper-small mejora el CER (0,078 frente a 0,095 de base en voz sintética) a cambio de ~450 ms más; queda
+  como opción en la interfaz.
+- **Primer audio extremo a extremo (motor completo, perfil rápido): 1,43 s**, frente a 1,99 s antes.
+- Pendiente: portar la traducción (NLLB) y XTTSv2 a OpenVINO. XTTS sigue sin ser sostenible en CPU.

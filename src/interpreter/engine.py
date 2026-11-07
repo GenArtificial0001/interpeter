@@ -45,7 +45,9 @@ class EngineConfig:
     target: str = "en"
     stt_model: str = "openai/whisper-base"
     mt_model: str = "facebook/nllb-200-distilled-600M"
-    quantize: bool = True
+    quantize: bool = True  # int8 en la traducción
+    stt_quantize: bool = False  # int8 en Whisper cambió alguna palabra en las pruebas: desactivado
+    accelerator: str = "auto"  # "auto" (GPU Intel con OpenVINO si existe) | "cpu"
     beams: int = 1
     tts_profile: str = "fast"  # "fast" (sin clonar) | "clone" (XTTSv2)
     reference_wav: str | None = None
@@ -71,17 +73,28 @@ class EngineEvents:
 Backends = tuple[STTBackend, MTBackend, TTSBackend]
 
 
+def make_stt(cfg: EngineConfig) -> STTBackend:
+    """Whisper con el codificador en la GPU Intel (OpenVINO) si está; si no, o si falla, en CPU."""
+    from .stages.backends import OVWhisperSTT, WhisperSTT, openvino_devices
+
+    if cfg.accelerator != "cpu" and "GPU" in openvino_devices():
+        try:
+            return OVWhisperSTT(cfg.stt_model, cfg.threads, device="GPU")
+        except Exception:  # noqa: BLE001 - cualquier fallo de OpenVINO cae a PyTorch
+            log.warning("OpenVINO no pudo iniciar; se usa PyTorch en CPU", exc_info=True)
+    return WhisperSTT(cfg.stt_model, cfg.threads, cfg.stt_quantize)
+
+
 def default_backends(cfg: EngineConfig) -> Backends:
     """Carga los modelos reales (lento: descarga la primera vez)."""
     from .stages.backends import (
         MMSTTS,
         NLLBTranslator,
-        WhisperSTT,
         XTTSClone,
         models_ready_marker,
     )
 
-    stt = WhisperSTT(cfg.stt_model, cfg.threads, cfg.quantize)
+    stt = make_stt(cfg)
     mt = NLLBTranslator(cfg.mt_model, cfg.threads, cfg.quantize, cfg.beams)
     if cfg.tts_profile == "clone":
         if not cfg.reference_wav:
@@ -150,7 +163,8 @@ class Engine:
                 self._set_state(EngineState.ERROR, "No se pudieron cargar los modelos")
                 self._fail(f"No se pudieron cargar los modelos: {exc}", exc)
                 raise
-            self._set_state(EngineState.READY, "Listo")
+            device = getattr(self._backends[0], "device", None)
+            self._set_state(EngineState.READY, f"Listo · reconocimiento en {device}" if device else "Listo")
 
     def _warm_up(self, backends: Backends) -> None:
         """Una pasada de práctica por cada modelo: la primera inferencia real es mucho más lenta.

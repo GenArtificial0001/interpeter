@@ -85,29 +85,108 @@ MMS_CODES = {"es": "spa", "en": "eng", "pt": "por", "fr": "fra", "de": "deu"}
 
 
 class WhisperSTT(STTBackend):
-    """Whisper de Hugging Face Transformers en CPU (modelos ``tiny``/``base``/``small``)."""
+    """Whisper de Transformers en CPU (modelos ``tiny``/``base``/``small``), con ``generate`` directo.
+
+    No se usa la clase ``pipeline``: añadía ~0,6 s de sobrecarga por frase (medido).
+    """
+
+    device = "CPU"
 
     def __init__(
         self, model: str = "openai/whisper-base", threads: int | None = None, quantize: bool = False
     ) -> None:
         use_local_model_cache()
         import torch
-        from transformers import pipeline
+        from transformers import WhisperFeatureExtractor, WhisperForConditionalGeneration, WhisperTokenizer
 
         if threads:
             torch.set_num_threads(threads)
+        self._torch = torch
         self.model_name = model
-        self._asr = pipeline("automatic-speech-recognition", model=model, device="cpu", dtype=torch.float32)
+        self._fe = WhisperFeatureExtractor.from_pretrained(model)
+        self._tok = WhisperTokenizer.from_pretrained(model)
+        self._model = WhisperForConditionalGeneration.from_pretrained(model, dtype=torch.float32).eval()
         if quantize:
-            self._asr.model = quantize_int8(self._asr.model)
+            self._model = quantize_int8(self._model)
 
     def transcribe(self, audio: np.ndarray, sample_rate: int, language: str) -> str:
         audio16 = _resample(audio, sample_rate, 16000)
-        out: Any = self._asr(
-            {"raw": audio16, "sampling_rate": 16000},
-            generate_kwargs={"language": language, "task": "transcribe"},
+        feats = self._fe(audio16, sampling_rate=16000, return_tensors="pt").input_features
+        max_tokens = int(min(200, audio16.size / 16000 * 8 + 20))  # corta repeticiones descontroladas
+        with self._torch.inference_mode():
+            ids = self._model.generate(feats, language=language, task="transcribe", max_new_tokens=max_tokens)
+        return str(self._tok.batch_decode(ids, skip_special_tokens=True)[0])
+
+
+def openvino_devices() -> list[str]:
+    """Dispositivos que OpenVINO ve (``CPU``, ``GPU``, ``NPU``). Vacío si no está instalado."""
+    try:
+        import openvino as ov
+
+        return list(ov.Core().available_devices)
+    except Exception:  # noqa: BLE001 - sin openvino o sin drivers
+        return []
+
+
+class OVWhisperSTT(WhisperSTT):
+    """Whisper con el *codificador* en OpenVINO (GPU/NPU/CPU de Intel) y el decodificador en PyTorch.
+
+    El codificador procesa siempre 30 s de espectrograma (forma fija), la parte más pesada para frases
+    cortas. Se convierte una vez a ``models/ov`` y las siguientes cargas lo reutilizan. El resto de la
+    generación (decodificador, tokenizador, idioma) sigue siendo el de Transformers.
+    """
+
+    def __init__(
+        self,
+        model: str = "openai/whisper-base",
+        threads: int | None = None,
+        device: str = "GPU",
+        precision: str = "f16",
+        quantize_decoder: bool = False,
+    ) -> None:
+        super().__init__(model, threads, quantize=False)
+        import openvino as ov
+        import torch
+        from transformers.modeling_outputs import BaseModelOutput
+
+        self.device, self.precision = device, precision
+        if quantize_decoder:  # int8 dinámico solo del decodificador (el codificador va en OpenVINO)
+            self._model.model.decoder = quantize_int8(self._model.model.decoder)
+            self._model.proj_out = quantize_int8(self._model.proj_out)
+        encoder = self._model.model.encoder
+        xml = app_home() / "models" / "ov" / f"{model.replace('/', '_')}_encoder_{precision}.xml"
+        core = ov.Core()
+        if not xml.is_file():
+            xml.parent.mkdir(parents=True, exist_ok=True)
+
+            class _EncoderOnly(torch.nn.Module):
+                def __init__(self, enc: Any) -> None:
+                    super().__init__()
+                    self.enc = enc
+
+                def forward(self, features: torch.Tensor) -> torch.Tensor:
+                    return self.enc(features).last_hidden_state
+
+            example = torch.zeros(1, encoder.conv1.in_channels, 3000)
+            with torch.inference_mode():
+                converted = ov.convert_model(_EncoderOnly(encoder), example_input=example)
+            ov.save_model(converted, str(xml), compress_to_fp16=precision == "f16")
+        compiled = core.compile_model(
+            core.read_model(str(xml)), device, {"INFERENCE_PRECISION_HINT": precision}
         )
-        return str(out["text"])
+        self._compiled = compiled
+        original_forward = encoder.forward
+
+        def ov_forward(input_features: torch.Tensor, *args: Any, return_dict: bool | None = None, **kw: Any):
+            feats = input_features.detach().cpu().numpy().astype(np.float32, copy=False)
+            if feats.shape[0] != 1 or feats.shape[-1] != 3000:  # forma no prevista: usa PyTorch
+                return original_forward(input_features, *args, return_dict=return_dict, **kw)
+            hidden = torch.from_numpy(np.array(compiled(feats)[0], dtype=np.float32))
+            if return_dict is False:
+                return (hidden,)
+            return BaseModelOutput(last_hidden_state=hidden)  # type: ignore[arg-type]
+
+        encoder.forward = ov_forward  # type: ignore[method-assign]
 
 
 class NLLBTranslator(MTBackend):
