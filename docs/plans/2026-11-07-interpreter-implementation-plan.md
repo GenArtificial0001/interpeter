@@ -93,3 +93,20 @@ solo existe hasta torch 2.7.1). Referencia de voz: una muestra sintética (solo 
 - `ruff` y `mypy` limpios antes de cada commit.
 - Comentarios y mensajes en español. Sin red en tiempo de ejecución una vez descargados los modelos.
 - Nada de audio, modelos ni perfiles de voz en git.
+
+## Estado de los hitos (2026-11-07)
+
+| Hito | Estado |
+|---|---|
+| 0 Benchmark | Hecho (perfil rápido ~2,6 s; clonado en CPU no sostenible) |
+| 1 Pipeline por línea de comandos | Cubierto por `interpreter.bench` y la prueba extremo a extremo |
+| 2 Audio en vivo | Hecho: captura/reproducción con sounddevice; micrófono y salida de esta laptop abren bien; motor con calentamiento, primer audio ~2,0 s en la prueba extremo a extremo |
+| 3 Interfaz PySide6 | Hecha (idiomas, dispositivos, nivel, retraso, transcripción, perfil, ajustes persistentes) |
+| 4 Bucle físico con Teams | **Pendiente: requiere el divisor TRRS y el cable, y una llamada de prueba** |
+| 5 Perfil clonado | Medido; falta grabar tu muestra de voz y aceleración para uso en vivo |
+| 6 Empaquetado | Hecho: `Interpreter.exe` (carpeta ~920 MB) arranca y carga modelos; CI listo para build en GitHub |
+
+Notas del empaquetado: PyInstaller necesita un lanzador con import absoluto (`launcher.py`); sin consola
+`sys.stderr` es `None`, por eso `setup_logging` redirige a `logs/console.log`. Los datos van a
+`%LOCALAPPDATA%\Interpreter` (o `INTERPRETER_HOME`). Tras la primera carga se crea `models/.ready` y la app
+deja de consultar Hugging Face.

@@ -15,6 +15,7 @@ __pycache__/
 keys/
 
 # Modelos, perfiles de voz y datos locales (nunca se versionan)
+logs/
 models/
 data/
 *.wav

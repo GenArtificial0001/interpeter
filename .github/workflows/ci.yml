@@ -55,7 +55,7 @@ jobs:
           pyinstaller --noconfirm --clean --windowed --name Interpreter --paths src
           --collect-submodules interpreter --collect-all transformers --collect-data sentencepiece
           --hidden-import scipy.signal --exclude-module matplotlib --exclude-module tkinter
-          --distpath build/dist --workpath build/work --specpath build src/interpreter/__main__.py
+          --distpath build/dist --workpath build/work --specpath build launcher.py
       - uses: actions/upload-artifact@v4
         with:
           name: Interpreter-windows
