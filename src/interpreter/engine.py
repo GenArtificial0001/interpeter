@@ -50,6 +50,7 @@ class EngineConfig:
     tts_profile: str = "fast"  # "fast" (sin clonar) | "clone" (XTTSv2)
     reference_wav: str | None = None
     vad_threshold_db: float = -42.0
+    pause_ms: int = 480  # pausa que cierra una frase: menor = menos retraso, pero frases más cortas
     threads: int | None = None
 
 
@@ -187,7 +188,9 @@ class Engine:
                 on_transcript=self.events.on_original,
                 on_translation=self.events.on_translation,
             )
-            segmenter = Segmenter(EnergyVAD(cfg.vad_threshold_db), VadConfig())
+            segmenter = Segmenter(
+                EnergyVAD(cfg.vad_threshold_db), VadConfig(end_silence_ms=max(160, cfg.pause_ms))
+            )
             self._player = self._player_factory(cfg.output_device, self._pipeline.get_audio)
             self._capture = self._capture_factory(
                 cfg.input_device, segmenter, self._on_segment, self.events.on_level

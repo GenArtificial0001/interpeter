@@ -25,7 +25,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..audio.calibrate import LoopbackReport, run_loopback_test
 from ..audio.devices import AudioDevice, list_devices
+from ..audio.voice_sample import record
 from ..engine import (
     LANGUAGES,
     Engine,
@@ -36,7 +38,9 @@ from ..engine import (
     check_devices,
 )
 from ..pipeline import UtteranceMetrics
+from ..stages.backends import app_home
 from . import theme
+from .voice_dialog import VoiceSampleDialog
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +53,9 @@ STATE_TEXT = {
 }
 
 PROFILES = {"fast": "Rápido (sin clonar)", "clone": "Clonado (XTTSv2, más lento)"}
+
+# (texto, milisegundos de silencio que cierran una frase)
+PAUSES = [("Rápida · 320 ms", 320), ("Normal · 480 ms", 480), ("Lenta · 700 ms", 700)]
 
 EngineBuilder = Callable[[EngineConfig, EngineEvents], Engine]
 
@@ -66,6 +73,7 @@ class Bridge(QObject):
     original = Signal(str)
     translation = Signal(str)
     error = Signal(str)
+    loop = Signal(object)
 
     def events(self) -> EngineEvents:
         return EngineEvents(
@@ -99,8 +107,12 @@ class MainWindow(QMainWindow):
         engine_builder: EngineBuilder = _default_engine,
         load_on_start: bool = True,
         settings: QSettings | None = None,
+        recorder: Callable[..., tuple] = record,
+        loop_runner: Callable[..., LoopbackReport] = run_loopback_test,
     ) -> None:
         super().__init__()
+        self._recorder = recorder
+        self._loop_runner = loop_runner
         self.setWindowTitle("Interpreter")
         self.resize(760, 760)
         self.setMinimumSize(640, 640)
@@ -119,6 +131,7 @@ class MainWindow(QMainWindow):
         self._bridge.original.connect(lambda t: self._log("Tú", t))
         self._bridge.translation.connect(lambda t: self._log("→", t))
         self._bridge.error.connect(self._on_error)
+        self._bridge.loop.connect(self._on_loop_result)
 
         self.engine = engine_builder(EngineConfig(), self._bridge.events())
         self._build_ui()
@@ -209,6 +222,31 @@ class MainWindow(QMainWindow):
         self.level_bar.setRange(0, 100)
         self.level_bar.setTextVisible(False)
         audio_lay.addWidget(self.level_bar)
+
+        tools = QHBoxLayout()
+        tools.addWidget(self._muted_label("Pausa para cerrar frase"))
+        self.cmb_pause = QComboBox()
+        for label, ms in PAUSES:
+            self.cmb_pause.addItem(label, ms)
+        self.cmb_pause.setCurrentIndex(self.cmb_pause.findData(480))
+        self.cmb_pause.setToolTip(
+            "Rápida responde antes pero corta las frases en trozos más cortos; lenta traduce frases más "
+            "completas pero tarda más."
+        )
+        tools.addWidget(self.cmb_pause)
+        tools.addStretch()
+        self.btn_loop = QPushButton("Probar bucle de audio")
+        self.btn_loop.setToolTip(
+            "Reproduce un tono breve por la salida elegida y lo graba por el micrófono elegido, para "
+            "ajustar el nivel hacia Teams."
+        )
+        self.btn_loop.clicked.connect(self._run_loop_test)
+        tools.addWidget(self.btn_loop)
+        audio_lay.addLayout(tools)
+        self.lbl_loop = QLabel("")
+        self.lbl_loop.setObjectName("muted")
+        self.lbl_loop.setWordWrap(True)
+        audio_lay.addWidget(self.lbl_loop)
         outer.addWidget(audio_card)
 
         # Control
@@ -252,13 +290,17 @@ class MainWindow(QMainWindow):
         self.cmb_profile = QComboBox()
         for code, name in PROFILES.items():
             self.cmb_profile.addItem(name, code)
-        self.btn_ref = QPushButton("Muestra de voz…")
+        self.btn_ref = QPushButton("Elegir .wav…")
         self.btn_ref.setToolTip("Archivo .wav de 20–30 s con tu voz, para el perfil clonado.")
         self.btn_ref.clicked.connect(self._choose_reference)
+        self.btn_rec = QPushButton("Grabar mi voz…")
+        self.btn_rec.setToolTip("Graba una muestra guiada de unos 25 s con el micrófono elegido.")
+        self.btn_rec.clicked.connect(self._record_voice)
         self.lbl_ref = QLabel("")
         self.lbl_ref.setObjectName("muted")
         adv.addWidget(self._muted_label("Perfil de voz"))
         adv.addWidget(self.cmb_profile)
+        adv.addWidget(self.btn_rec)
         adv.addWidget(self.btn_ref)
         adv.addWidget(self.lbl_ref, 1)
         outer.addLayout(adv)
@@ -293,8 +335,12 @@ class MainWindow(QMainWindow):
             (self.cmb_source, "source"),
             (self.cmb_target, "target"),
             (self.cmb_profile, "profile"),
+            (self.cmb_pause, "pause"),
         ):
-            idx = combo.findData(s.value(key, type=str))
+            value = str(s.value(key, "", type=str))
+            idx = combo.findData(value)
+            if idx < 0 and value.isdigit():  # datos numéricos (p. ej. la pausa) se guardan como texto
+                idx = combo.findData(int(value))
             if idx >= 0:
                 combo.setCurrentIndex(idx)
         for combo, key in ((self.cmb_input, "input"), (self.cmb_output, "output")):
@@ -313,6 +359,7 @@ class MainWindow(QMainWindow):
         s.setValue("source", self.cmb_source.currentData())
         s.setValue("target", self.cmb_target.currentData())
         s.setValue("profile", self.cmb_profile.currentData())
+        s.setValue("pause", self.cmb_pause.currentData())
         s.setValue("input", self.cmb_input.currentText())
         s.setValue("output", self.cmb_output.currentText())
         s.setValue("reference", self.engine.config.reference_wav or "")
@@ -351,6 +398,7 @@ class MainWindow(QMainWindow):
         cfg.target = self.cmb_target.currentData()
         cfg.input_device = self.cmb_input.currentData()
         cfg.output_device = self.cmb_output.currentData()
+        cfg.pause_ms = int(self.cmb_pause.currentData())
 
     def _toggle(self) -> None:
         if self.engine.state is EngineState.RUNNING:
@@ -373,17 +421,62 @@ class MainWindow(QMainWindow):
             self.reload_models()
 
     def _sync_profile_widgets(self) -> None:
+        # Grabar la muestra se puede hacer siempre; elegir un .wav y su nombre solo importan al clonar.
         clone = self.cmb_profile.currentData() == "clone"
         self.btn_ref.setVisible(clone)
-        self.lbl_ref.setVisible(clone)
+        self.lbl_ref.setVisible(clone or bool(self.engine.config.reference_wav))
+
+    def _record_voice(self) -> None:
+        dlg = VoiceSampleDialog(
+            self,
+            self.cmb_input.currentData(),
+            app_home() / "voices" / "mi_voz.wav",
+            recorder=self._recorder,
+        )
+        if dlg.exec() and dlg.saved_path is not None:
+            self._set_reference(str(dlg.saved_path))
+
+    def _set_reference(self, path: str) -> None:
+        self.engine.config.reference_wav = path
+        self.lbl_ref.setText(path.replace("\\", "/").rsplit("/", 1)[-1])
+        self._sync_profile_widgets()
+        self._save_settings()
+        if self.cmb_profile.currentData() == "clone":
+            self.reload_models()
+
+    def _run_loop_test(self) -> None:
+        if self.engine.state is EngineState.RUNNING:
+            self.lbl_loop.setText("Detén la interpretación antes de probar el bucle.")
+            return
+        out, inp = self.cmb_output.currentData(), self.cmb_input.currentData()
+        self.btn_loop.setEnabled(False)
+        self.lbl_loop.setText("Sonará un tono breve por la salida elegida…")
+
+        def work() -> None:
+            try:
+                self._bridge.loop.emit(self._loop_runner(out, inp))
+            except Exception as exc:  # noqa: BLE001 - se informa en la interfaz
+                log.exception("Fallo en la prueba del bucle")
+                self._bridge.error.emit(f"La prueba del bucle falló: {exc}")
+                self._bridge.loop.emit(None)
+
+        threading.Thread(target=work, name="loop-test", daemon=True).start()
+
+    def _on_loop_result(self, report: object) -> None:
+        self.btn_loop.setEnabled(True)
+        if report is None:
+            self.lbl_loop.setText("")
+            return
+        r: LoopbackReport = report  # type: ignore[assignment]
+        mark = "✓" if r.verdict == "ok" else "⚠"
+        self.lbl_loop.setText(
+            f"{mark} {r.advice}  (tono {r.tone_dbfs:.0f} dBFS · relación señal/ruido {r.snr_db:.0f} dB)"
+        )
 
     def _choose_reference(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Muestra de tu voz", "", "Audio WAV (*.wav)")
         if path:
-            self.engine.config.reference_wav = path
-            self.lbl_ref.setText(path.replace("\\", "/").rsplit("/", 1)[-1])
-            self._save_settings()
-            self.reload_models()
+            self._set_reference(path)
 
     # -- eventos del motor -------------------------------------------------------------------------
 
@@ -402,8 +495,18 @@ class MainWindow(QMainWindow):
         self.btn_toggle.setObjectName("primary stop" if running else "primary")
         self.btn_toggle.setProperty("class", "stop" if running else "")
         self.btn_toggle.setStyleSheet(f"background:{theme.DANGER}; color:#2a0a0a;" if running else "")
-        for w in (self.cmb_source, self.cmb_input, self.cmb_output, self.cmb_profile, self.btn_ref):
-            w.setEnabled(not running and state is not EngineState.LOADING)
+        editable = not running and state is not EngineState.LOADING
+        for w in (
+            self.cmb_source,
+            self.cmb_input,
+            self.cmb_output,
+            self.cmb_profile,
+            self.cmb_pause,
+            self.btn_ref,
+            self.btn_rec,
+            self.btn_loop,
+        ):
+            w.setEnabled(editable)
         if not running:
             self._level = 0.0
 

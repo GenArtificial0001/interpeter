@@ -104,3 +104,76 @@ def test_nivel_del_microfono_mueve_el_medidor(app, settings):
     win._tick_meter()
     assert win.level_bar.value() > 50
     win.close()
+
+
+# -- nuevas funciones: pausa, bucle y muestra de voz ----------------------------------------------
+
+
+def test_la_pausa_elegida_llega_al_motor_y_se_recuerda(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.cmb_pause.setCurrentIndex(win.cmb_pause.findData(320))
+    win.btn_toggle.click()
+    assert win.engine.config.pause_ms == 320
+    win.btn_toggle.click()
+    win.close()
+    win2 = MainWindow(_builder, load_on_start=False, settings=settings)
+    assert win2.cmb_pause.currentData() == 320
+    win2.close()
+
+
+def test_prueba_del_bucle_muestra_el_resultado(app, settings):
+    from interpreter.audio.calibrate import LoopbackReport
+
+    llamadas = []
+
+    def runner(out, inp):
+        llamadas.append((out, inp))
+        return LoopbackReport(-18.0, -70.0, 52.0, 0.2, False, "ok", "Nivel correcto para Teams.")
+
+    win = MainWindow(_builder, settings=settings, loop_runner=runner)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.btn_loop.click()
+    assert pump(app, lambda: "Nivel correcto" in win.lbl_loop.text())
+    assert win.btn_loop.isEnabled() and len(llamadas) == 1
+    win.close()
+
+
+def test_prueba_del_bucle_error_no_deja_el_boton_bloqueado(app, settings):
+    def runner(out, inp):
+        raise OSError("dispositivo no disponible")
+
+    win = MainWindow(_builder, settings=settings, loop_runner=runner)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win.btn_loop.click()
+    assert pump(app, lambda: win.btn_loop.isEnabled())
+    assert "no disponible" in win.lbl_warning.text()
+    win.close()
+
+
+def test_grabar_muestra_de_voz_guarda_y_fija_la_referencia(app, settings, tmp_path, monkeypatch):
+    from interpreter.ui.voice_dialog import VoiceSampleDialog
+
+    monkeypatch.setenv("INTERPRETER_HOME", str(tmp_path))
+    rng = np.random.default_rng(0)
+    t = np.arange(16000 * 25) / 16000
+    voz = (0.1 * np.sin(2 * np.pi * 180 * t) * (np.sin(2 * np.pi * 1.5 * t) > -0.3)).astype(np.float32)
+    voz += rng.normal(0, 0.0003, voz.size).astype(np.float32)
+
+    def fake_record(device, seconds, on_level=None):
+        return voz, 16000
+
+    dlg = VoiceSampleDialog(None, None, tmp_path / "voices" / "mi_voz.wav", recorder=fake_record, seconds=1.0)
+    dlg.btn_record.click()
+    assert pump(app, lambda: dlg.report is not None)
+    assert dlg.report.ok and dlg.btn_use.isEnabled()
+    dlg.btn_use.click()
+    assert dlg.saved_path is not None and dlg.saved_path.is_file()
+
+    win = MainWindow(_builder, settings=settings, recorder=fake_record)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    win._set_reference(str(dlg.saved_path))
+    assert win.engine.config.reference_wav == str(dlg.saved_path)
+    assert "mi_voz.wav" in win.lbl_ref.text()
+    assert not win.lbl_ref.isHidden()
+    win.close()
