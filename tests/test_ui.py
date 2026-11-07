@@ -599,6 +599,7 @@ def test_el_boton_de_prueba_envia_un_tono_al_navegador(app, settings):
     win = MainWindow(_builder_web(holder), settings=settings)
     pump(app, lambda: win.btn_toggle.isEnabled())
     _choose_browser(win)
+    assert pump(app, lambda: win.btn_loop.isEnabled())  # elegir la salida puede recargar modelos un instante
     win.btn_loop.click()
     assert "No hay ningún navegador" in win.lbl_loop.text()
     holder["srv"].clients = 2
@@ -617,4 +618,68 @@ def test_el_modo_navegador_no_dispara_el_aviso_de_mismo_equipo(app, settings):
     assert not win.lbl_warning.isHidden()  # mismo auricular: aviso
     _choose_browser(win)
     assert win.lbl_warning.isHidden()  # con el navegador como salida ya no aplica
+    win.close()
+
+
+# -- glosario -------------------------------------------------------------------------------------
+
+
+def test_la_ventana_carga_el_glosario_del_usuario_en_el_motor(app, settings, tmp_path):
+    from interpreter.glossary import Glossary, GlossaryEntry
+
+    ruta = tmp_path / "glossary.json"
+    Glossary([GlossaryEntry("Kanban", ["can ban"])]).save(ruta)
+    win = MainWindow(_builder, settings=settings, glossary_path=ruta, load_on_start=False)
+    assert [e.term for e in win.engine.glossary.entries] == ["Kanban"]
+    win.close()
+
+
+def test_el_dialogo_edita_guarda_y_aplica_el_glosario(app, settings, tmp_path):
+    import json
+
+    from interpreter.ui.glossary_dialog import GlossaryDialog
+
+    ruta = tmp_path / "glossary.json"
+    win = MainWindow(_builder, settings=settings, glossary_path=ruta, load_on_start=False)
+    glossary = win.engine.glossary
+    dlg = GlossaryDialog(win, glossary, ruta)
+    dlg.table.setRowCount(0)
+    fila = dlg.add_row()
+    for col, texto in enumerate(["Kanban", "can ban, canban", "Kan Ban", "Kanban board", "", ""]):
+        dlg.table.item(fila, col).setText(texto)
+    dlg.add_row()  # fila vacía: se ignora
+    dlg.add_row()
+    dlg.table.item(2, 0).setText("kanban")  # repetido (sin distinguir mayúsculas): se ignora
+    dlg._save()
+    assert dlg.saved
+    e = glossary.entries[0]
+    assert [x.term for x in glossary.entries] == ["Kanban"]
+    assert (
+        e.aliases == ["can ban", "canban"]
+        and e.spoken == "Kan Ban"
+        and e.translations == {"en": "Kanban board"}
+    )
+    assert glossary.correct("el canban de hoy")[0] == "el Kanban de hoy"  # aplicado sin reiniciar
+    assert json.loads(ruta.read_text(encoding="utf-8"))["entries"][0]["term"] == "Kanban"
+    win.close()
+
+
+def test_el_dialogo_quita_filas_y_restaura_ejemplos(app, settings, tmp_path):
+    from interpreter.ui.glossary_dialog import GlossaryDialog
+
+    win = MainWindow(_builder, settings=settings, glossary_path=tmp_path / "g.json", load_on_start=False)
+    dlg = GlossaryDialog(win, win.engine.glossary, tmp_path / "g.json")
+    antes = dlg.table.rowCount()
+    dlg.table.selectRow(0)
+    dlg._remove_selected()
+    assert dlg.table.rowCount() == antes - 1
+    dlg._restore_defaults()
+    assert dlg.table.rowCount() == antes
+    win.close()
+
+
+def test_el_boton_de_glosario_existe_y_la_pausa_muy_lenta_tambien(app, settings):
+    win = MainWindow(_builder, settings=settings, load_on_start=False)
+    assert win.btn_glossary.text().startswith("Glosario")
+    assert 1000 in [win.cmb_pause.itemData(i) for i in range(win.cmb_pause.count())]
     win.close()

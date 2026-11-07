@@ -96,8 +96,30 @@ voz en ese idioma, y la casilla **Anti-eco** ignora lo que el micrófono capta m
 traducción. Con micrófono y altavoces del mismo equipo (o el mismo auricular Bluetooth) conviene separar
 los dispositivos.
 
+## Palabras en inglés, siglas y nombres: el glosario
+
+Un reconocedor en español «oye» mal las palabras en inglés («Sherpoin», «fort») y un traductor puede
+traducirlas o deformarlas. El botón **Glosario…** (junto a «Reconocimiento») guarda en
+`glossary.json` los términos que quieres proteger: SharePoint, Ford, SAP, KPI, nombres de tu equipo…
+
+Cada término actúa en cuatro puntos:
+
+1. **Reconocimiento:** Whisper recibe la lista como pista y, si aun así oye «Sherpoin», se corrige con
+   las *variantes* que tú anotas (también corrige parecidos en términos largos y los pegados a una
+   preposición: «asarePoint» → «a SharePoint»).
+2. **Traducción:** el término se esconde tras una marca que el traductor no toca y se pone al final
+   (o su traducción fija, p. ej. «patio de contenedores» → «container yard»).
+3. **Voz:** la columna *Pronunciación* dice cómo sonará («S A P» para deletrear una sigla).
+4. **Filtro de idioma:** una frase con términos del glosario no se descarta por llevar mucho inglés.
+
+Consejos: para una sigla escribe como suena en español en *Variantes* («ese a pe», «ka pi ai»); revisa
+`logs/interpreter.log`, donde cada frase queda registrada con lo que se oyó y si se aceptó o rechazó, y
+añade las variantes que veas repetirse; habla las palabras en inglés despacio y claras; para frases
+largas o con pausas, elige **Muy lenta · 1000 ms**; si el reconocimiento se equivoca con palabras
+cotidianas («buenísima» → «buena»), prueba **Preciso · Whisper small**.
+
 ## Teams sin cable: micrófono virtual del navegador
 
-Si usas **Teams o Meet en el navegador**, no hace falta cable ni VB-Cable: en *Salida* elige «Micrófono
+Si usas **Teams, Meet o Zoom en el navegador**, no hace falta cable ni VB-Cable: en *Salida* elige «Micrófono
 virtual del navegador» e instala la extensión de `browser-extension/` (ver su README). Teams de escritorio
 sigue necesitando el cable (lazo físico en el jack) o VB-Cable.

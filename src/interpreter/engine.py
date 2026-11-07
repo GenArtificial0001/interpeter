@@ -18,6 +18,7 @@ from typing import Any
 
 from .audio.io import MicCapture, Player
 from .audio.webmic import WebMicPlayer, WebMicServer
+from .glossary import Glossary
 from .messages import SpeechSegment
 from .pipeline import Pipeline, UtteranceMetrics
 from .stages.base import MTBackend, STTBackend, TTSBackend
@@ -140,8 +141,10 @@ class Engine:
         capture_factory: Callable[..., Any] = MicCapture,
         player_factory: Callable[..., Any] = Player,
         webmic_factory: Callable[[Callable[[int], None]], WebMicServer] | None = None,
+        glossary: Glossary | None = None,
     ) -> None:
         self.config = config or EngineConfig()
+        self.glossary = glossary if glossary is not None else Glossary()  # vacío = sin efecto
         self.events = events or EngineEvents()
         self._backend_factory = backend_factory
         self._capture_factory = capture_factory
@@ -228,6 +231,8 @@ class Engine:
             if cfg.source == cfg.target:
                 raise EngineError("El idioma de entrada y el de salida no pueden ser el mismo.")
             stt, mt, tts = self._backends
+            if hasattr(stt, "glossary"):
+                stt.glossary = self.glossary  # sesgo del reconocimiento y corrección de términos
             self._pipeline = Pipeline(
                 stt,
                 mt,
@@ -239,6 +244,7 @@ class Engine:
                 on_transcript=self._on_original,
                 on_translation=self._on_translation,
                 on_drop=self._on_pipeline_drop,
+                glossary=self.glossary,
             )
             classifier = AdaptiveEnergyVAD() if cfg.vad_mode == "auto" else EnergyVAD(cfg.vad_threshold_db)
             segmenter = Segmenter(classifier, VadConfig(end_silence_ms=max(160, cfg.pause_ms)))

@@ -164,3 +164,100 @@ def test_prepare_reference_recorta_a_diez_segundos_de_voz(tmp_path, monkeypatch)
     data, sr_out = sf.read(corta)
     assert sr_out == sr and 9.9 < len(data) / sr < 10.1  # sin los 2 s de silencio inicial
     assert float(np.max(np.abs(data[: sr // 2]))) > 0.1
+
+
+# -- glosario en las etapas ---------------------------------------------------------------------------
+
+
+class RecordingMT(FakeMT):
+    """Traductor que anota lo que recibe y copia las marcas sin tocarlas, como hace NLLB."""
+
+    def __init__(self, lose_marks: bool = False) -> None:
+        super().__init__()
+        self.seen: list[str] = []
+        self.lose_marks = lose_marks
+
+    def translate(self, text: str, source: str, target: str) -> str:
+        self.seen.append(text)
+        if self.lose_marks and "QZ" in text:
+            return "perdí todo"
+        return text.replace("Abre", "Open").replace("con", "with")
+
+
+class RecordingTTS(FakeTTS):
+    def __init__(self) -> None:
+        super().__init__(chunks=1)
+        self.spoken: list[str] = []
+
+    def synthesize(self, text, language):
+        self.spoken.append(text)
+        yield from super().synthesize(text, language)
+
+
+def _glossary():
+    from interpreter.glossary import Glossary, GlossaryEntry
+
+    return Glossary(
+        [
+            GlossaryEntry("SharePoint", ["sherpoin"]),
+            GlossaryEntry("SAP", ["ese a pe"], "S A P"),
+            GlossaryEntry("patio de contenedores", [], "", {"en": "container yard"}),
+        ]
+    )
+
+
+def test_el_glosario_protege_terminos_en_la_traduccion_y_ajusta_la_pronunciacion():
+    translations: list[str] = []
+    mt, tts = RecordingMT(), RecordingTTS()
+    p = Pipeline(
+        FakeSTT("Abre SharePoint con el SAP en el patio de contenedores"),
+        mt,
+        tts,
+        "es",
+        "en",
+        on_translation=lambda t: translations.append(t),
+        glossary=_glossary(),
+    )
+    p.start()
+    try:
+        p.submit(seg())
+        collect(p, 1)
+    finally:
+        p.stop()
+    assert "SharePoint" not in mt.seen[0] and "QZ0Q" in mt.seen[0]  # el traductor nunca ve el término
+    assert translations == ["Open SharePoint with el SAP en el container yard"]
+    assert tts.spoken == ["Open SharePoint with el S A P en el container yard"]
+
+
+def test_si_el_traductor_pierde_una_marca_se_reintenta_sin_proteger():
+    translations: list[str] = []
+    mt = RecordingMT(lose_marks=True)
+    p = Pipeline(
+        FakeSTT("Abre SharePoint"),
+        mt,
+        FakeTTS(chunks=1),
+        "es",
+        "en",
+        on_translation=lambda t: translations.append(t),
+        glossary=_glossary(),
+    )
+    p.start()
+    try:
+        p.submit(seg())
+        collect(p, 1)
+    finally:
+        p.stop()
+    assert len(mt.seen) == 2 and "QZ" in mt.seen[0] and mt.seen[1] == "Abre SharePoint"
+    assert translations == ["Open SharePoint"]
+
+
+def test_sin_glosario_el_flujo_no_cambia():
+    mt = RecordingMT()
+    p = Pipeline(FakeSTT("Abre SharePoint"), mt, FakeTTS(chunks=1), "es", "en")
+    p.start()
+    try:
+        p.submit(seg())
+        collect(p, 1)
+    finally:
+        p.stop()
+    assert mt.seen == ["Abre SharePoint"]

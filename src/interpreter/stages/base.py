@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from time import perf_counter
+from typing import Any
 
 import numpy as np
 
@@ -81,16 +82,29 @@ class MTStage:
         target: str,
         on_text: Callable[[str], None] | None = None,
         on_drop: DropCallback | None = None,
+        glossary: Any = None,
     ) -> None:
+        self.glossary = glossary
         self.backend = backend
         self.target = target  # se puede cambiar en caliente desde otro hilo (asignación atómica)
         self.on_text = on_text
         self.on_drop = on_drop
 
+    def _translate(self, source_text: str, source: str, target: str) -> str:
+        """Traduce protegiendo los términos del glosario; si se pierde una marca, reintenta sin ella."""
+        g = self.glossary
+        if g:
+            masked, mapping = g.protect(source_text, target)
+            if mapping:
+                restored = g.restore(self.backend.translate(masked, source, target), mapping)
+                if restored is not None:
+                    return restored.strip()
+        return self.backend.translate(source_text, source, target).strip()
+
     def process(self, tr: Transcript) -> Iterator[Translation]:
         target = self.target
         t0 = perf_counter()
-        text = self.backend.translate(tr.text, tr.language, target).strip()
+        text = self._translate(tr.text, tr.language, target)
         tr.timings.mt = perf_counter() - t0
         tr.timings.mt_done_at = perf_counter()
         if text:
@@ -104,13 +118,17 @@ class MTStage:
 class TTSStage:
     name = "tts"
 
-    def __init__(self, backend: TTSBackend, on_drop: DropCallback | None = None) -> None:
+    def __init__(
+        self, backend: TTSBackend, on_drop: DropCallback | None = None, glossary: Any = None
+    ) -> None:
         self.backend = backend
         self.on_drop = on_drop
+        self.glossary = glossary
 
     def process(self, tl: Translation) -> Iterator[AudioChunk]:
         first = True
-        for audio in self.backend.synthesize(tl.text, tl.target_language):
+        spoken = self.glossary.speakable(tl.text) if self.glossary else tl.text  # SAP -> «S A P»
+        for audio in self.backend.synthesize(spoken, tl.target_language):
             if first:
                 tl.timings.tts_first_audio = tl.timings.e2e()
             yield AudioChunk(audio, self.backend.sample_rate, tl.generation, first, tl.timings)

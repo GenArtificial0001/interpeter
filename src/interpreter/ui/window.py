@@ -10,6 +10,7 @@ import statistics
 import threading
 from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -42,9 +43,11 @@ from ..engine import (
     EngineState,
     check_devices,
 )
+from ..glossary import Glossary
 from ..pipeline import UtteranceMetrics
 from ..stages.backends import app_home
 from . import theme
+from .glossary_dialog import GlossaryDialog
 from .voice_dialog import VoiceSampleDialog
 
 log = logging.getLogger(__name__)
@@ -79,7 +82,12 @@ ACCELERATORS = [("Automática (GPU Intel si hay)", "auto"), ("Solo CPU", "cpu")]
 # (texto, milisegundos de silencio que cierran una frase)
 DEVICE_POLL_MS = 3000  # cada cuánto se revisan los dispositivos de audio
 
-PAUSES = [("Rápida · 320 ms", 320), ("Normal · 480 ms", 480), ("Lenta · 700 ms", 700)]
+PAUSES = [
+    ("Rápida · 320 ms", 320),
+    ("Normal · 480 ms", 480),
+    ("Lenta · 700 ms", 700),
+    ("Muy lenta · 1000 ms", 1000),
+]
 
 EngineBuilder = Callable[[EngineConfig, EngineEvents], Engine]
 
@@ -175,8 +183,10 @@ class MainWindow(QMainWindow):
         device_scanner: Callable[[], tuple[list[AudioDevice], list[AudioDevice]]] = scan_devices,
         clone_is_available: bool | None = None,
         license_prompt: Callable[..., bool] = _ask_license,
+        glossary_path: Path | None = None,
     ) -> None:
         super().__init__()
+        self._glossary_path = glossary_path or app_home() / "glossary.json"
         self._clone_available = clone_available() if clone_is_available is None else clone_is_available
         self._license_prompt = license_prompt
         self._device_scanner = device_scanner
@@ -210,6 +220,8 @@ class MainWindow(QMainWindow):
         )
 
         self.engine = engine_builder(EngineConfig(), self._bridge.events())
+        if hasattr(self.engine, "glossary"):
+            self.engine.glossary.replace_with(Glossary.load(self._glossary_path))
         self._build_ui()
         self._fit_initial_size()
         self._load_devices()
@@ -439,6 +451,12 @@ class MainWindow(QMainWindow):
         rec.addWidget(self.cmb_stt, 1)
         rec.addWidget(self._muted_label("Aceleración"))
         rec.addWidget(self.cmb_accel, 1)
+        self.btn_glossary = QPushButton("Glosario…")
+        self.btn_glossary.setToolTip(
+            "Palabras en inglés, siglas y nombres (SharePoint, Ford, SAP…) que no hay que traducir."
+        )
+        self.btn_glossary.clicked.connect(self._edit_glossary)
+        rec.addWidget(self.btn_glossary)
         outer.addLayout(rec)
         self.cmb_stt.currentIndexChanged.connect(self._on_profile_changed)
         self.cmb_accel.currentIndexChanged.connect(self._on_profile_changed)
@@ -706,6 +724,15 @@ class MainWindow(QMainWindow):
         clone = self.cmb_profile.currentData() in CLONE_PROFILES
         self.btn_ref.setVisible(clone)
         self.lbl_ref.setVisible(clone or bool(self.engine.config.reference_wav))
+
+    def _edit_glossary(self) -> None:
+        glossary = getattr(self.engine, "glossary", None)
+        if glossary is None:
+            return
+        dlg = GlossaryDialog(self, glossary, self._glossary_path)
+        dlg.exec()
+        if dlg.saved:
+            self._log("ℹ", f"Glosario guardado: {len(glossary)} términos (se aplica ya).")
 
     def _record_voice(self) -> None:
         dlg = VoiceSampleDialog(

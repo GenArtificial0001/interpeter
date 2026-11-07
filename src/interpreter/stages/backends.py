@@ -6,6 +6,7 @@ Los modelos se descargan a ``models/hf`` (ignorado por git) y después funcionan
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import warnings
@@ -16,6 +17,8 @@ from typing import Any
 import numpy as np
 
 from .base import MTBackend, STTBackend, TTSBackend
+
+log = logging.getLogger(__name__)
 
 
 def app_home() -> Path:
@@ -95,6 +98,8 @@ class WhisperSTT(STTBackend):
     # p(idioma) ≈ 0,97–1,0 y logprob ≈ -0,1…-0,3; el eco y el ruido dan p(idioma) ≤ 0,02.
     min_language_prob = 0.35
     min_avg_logprob = -1.0
+    min_mixed_language_prob = 0.03  # frases con términos del glosario (mezcla de idiomas)
+    min_mixed_logprob = -0.8
 
     def __init__(
         self, model: str = "openai/whisper-base", threads: int | None = None, quantize: bool = False
@@ -114,6 +119,20 @@ class WhisperSTT(STTBackend):
             self._model = quantize_int8(self._model)
         self.last_reject: str | None = None  # motivo del último rechazo: "idioma", "confianza" o None
         self.last_stats: dict[str, float] = {}
+        self.glossary: Any = None  # interpreter.glossary.Glossary (opcional)
+        self.use_prompt = True  # sesgar a Whisper con el glosario (prompt_ids)
+        self._prompt_cache: tuple[str, Any] = ("", None)
+
+    def _prompt_ids(self) -> Any:
+        """``prompt_ids`` con los términos del glosario, o ``None`` (se recalcula si el glosario cambió)."""
+        if self.glossary is None or not self.use_prompt:
+            return None
+        prompt = self.glossary.initial_prompt()
+        if not prompt:
+            return None
+        if self._prompt_cache[0] != prompt:
+            self._prompt_cache = (prompt, self._tok.get_prompt_ids(prompt, return_tensors="pt"))
+        return self._prompt_cache[1]
 
     def transcribe(self, audio: np.ndarray, sample_rate: int, language: str) -> str:
         """Texto reconocido, o ``""`` si no parece voz en ``language`` (eco, ruido, alucinación)."""
@@ -130,6 +149,10 @@ class WhisperSTT(STTBackend):
             lang_ids = list(gc.lang_to_id.values())
             target = gc.lang_to_id.get(f"<|{language}|>")
             p_lang = float(probs[target] / probs[lang_ids].sum()) if target is not None else 1.0
+            extra: dict[str, Any] = {}
+            prompt_ids = self._prompt_ids()
+            if prompt_ids is not None:
+                extra["prompt_ids"] = prompt_ids
             out = self._model.generate(
                 encoder_outputs=enc,
                 language=language,
@@ -137,16 +160,33 @@ class WhisperSTT(STTBackend):
                 max_new_tokens=max_tokens,
                 return_dict_in_generate=True,
                 output_scores=True,
+                **extra,
             )
             steps = self._model.compute_transition_scores(out.sequences, out.scores, normalize_logits=True)
             avg_logprob = float(steps[0].mean()) if steps.numel() else 0.0
             text = str(self._tok.batch_decode(out.sequences, skip_special_tokens=True)[0]).strip()
+        found: list[str] = []
+        if self.glossary is not None and text:
+            text, found = self.glossary.correct(text)
         self.last_stats = {"p_idioma": p_lang, "logprob": avg_logprob}
         self.last_reject = None
-        if p_lang < self.min_language_prob:
+        # Una frase con términos del glosario puede llevar mucho inglés: se tolera una probabilidad de idioma
+        # baja si el reconocimiento está seguro de lo que oyó.
+        mixed = (
+            bool(found) and p_lang >= self.min_mixed_language_prob and avg_logprob >= self.min_mixed_logprob
+        )
+        if p_lang < self.min_language_prob and not mixed:
             self.last_reject = "idioma"
         elif avg_logprob < self.min_avg_logprob:
             self.last_reject = "confianza"
+        log.info(
+            "Reconocimiento: p_idioma=%.2f logprob=%.2f términos=%s -> %s: %s",
+            p_lang,
+            avg_logprob,
+            found or "-",
+            self.last_reject or "aceptado",
+            text[:90],
+        )
         return "" if self.last_reject else text
 
 

@@ -579,3 +579,29 @@ def test_un_puerto_ocupado_se_informa_como_error_del_motor():
     eng.load()
     with pytest.raises(EngineError, match="puerto"):
         eng.start()
+
+
+def test_el_motor_pasa_su_glosario_al_reconocimiento_y_a_la_traduccion():
+    from interpreter.glossary import Glossary, GlossaryEntry
+
+    stt = FakeSTT("hola SharePoint")
+    stt.glossary = None
+    mt = FakeMT({"hola SharePoint": "hello SharePoint"})
+    glossary = Glossary([GlossaryEntry("SharePoint")])
+    eng = Engine(
+        EngineConfig(),
+        EngineEvents(),
+        lambda cfg: (stt, mt, FakeTTS(chunks=1)),
+        lambda *a, **k: FakeCapture(*a, **k),
+        lambda *a: FakePlayer(*a),
+        glossary=glossary,
+    )
+    eng.load()
+    eng.start()
+    try:
+        assert stt.glossary is glossary
+        # Editar el glosario en caliente (desde la interfaz) llega a las etapas sin reiniciar.
+        glossary.replace_with(Glossary([GlossaryEntry("Ford")]))
+        assert [e.term for e in stt.glossary.entries] == ["Ford"]
+    finally:
+        eng.stop()
