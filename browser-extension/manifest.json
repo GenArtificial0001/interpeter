@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Interpreter: micrófono virtual",
+  "version": "0.1.0",
+  "description": "Presenta a Teams/Meet web la voz traducida de Interpreter (app local) como si fuera tu micrófono.",
+  "minimum_chrome_version": "116",
+  "host_permissions": ["ws://127.0.0.1:8765/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://teams.live.com/*",
+        "https://meet.google.com/*"
+      ],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://teams.live.com/*",
+        "https://meet.google.com/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "ISOLATED"
+    }
+  ]
+}

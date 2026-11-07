@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .audio.io import MicCapture, Player
+from .audio.webmic import WebMicPlayer, WebMicServer
 from .messages import SpeechSegment
 from .pipeline import Pipeline, UtteranceMetrics
 from .stages.base import MTBackend, STTBackend, TTSBackend
@@ -43,6 +44,7 @@ class EngineError(Exception):
 class EngineConfig:
     input_device: int | None = None
     output_device: int | None = None
+    output_mode: str = "device"  # "device" (altavoz/jack) | "browser" (micrófono virtual de Teams web)
     source: str = "es"
     target: str = "en"
     stt_model: str = "openai/whisper-base"
@@ -74,6 +76,7 @@ class EngineEvents:
     on_segment: Callable[[float], None] = _noop  # duración (s) de cada frase que el detector de voz cerró
     on_dropped: Callable[[str, float], None] = _noop  # (motivo, duración s) de una frase que NO se tradujo
     on_error: Callable[[str], None] = _noop
+    on_webmic_clients: Callable[[int], None] = _noop  # navegadores conectados al micrófono virtual
 
 
 Backends = tuple[STTBackend, MTBackend, TTSBackend]
@@ -136,12 +139,15 @@ class Engine:
         backend_factory: Callable[[EngineConfig], Backends] = default_backends,
         capture_factory: Callable[..., Any] = MicCapture,
         player_factory: Callable[..., Any] = Player,
+        webmic_factory: Callable[[Callable[[int], None]], WebMicServer] | None = None,
     ) -> None:
         self.config = config or EngineConfig()
         self.events = events or EngineEvents()
         self._backend_factory = backend_factory
         self._capture_factory = capture_factory
         self._player_factory = player_factory
+        self._webmic: WebMicServer | None = None
+        self._webmic_factory = webmic_factory or (lambda cb: WebMicServer(on_clients_changed=cb))
         self._lock = threading.RLock()
         self._state = EngineState.IDLE
         self._backends: Backends | None = None
@@ -236,9 +242,14 @@ class Engine:
             )
             classifier = AdaptiveEnergyVAD() if cfg.vad_mode == "auto" else EnergyVAD(cfg.vad_threshold_db)
             segmenter = Segmenter(classifier, VadConfig(end_silence_ms=max(160, cfg.pause_ms)))
-            self._player = self._player_factory(
-                cfg.output_device, self._pipeline.get_audio, self.events.on_error
-            )
+            if cfg.output_mode == "browser":
+                self._player = WebMicPlayer(
+                    self.ensure_webmic(), self._pipeline.get_audio, self.events.on_error
+                )
+            else:
+                self._player = self._player_factory(
+                    cfg.output_device, self._pipeline.get_audio, self.events.on_error
+                )
             self._capture = self._capture_factory(
                 cfg.input_device,
                 segmenter,
@@ -267,6 +278,24 @@ class Engine:
         self.stop()
         self._backends = None
         self._state = EngineState.IDLE
+        if self._webmic is not None:
+            self._webmic.stop()
+            self._webmic = None
+
+    @property
+    def webmic(self) -> WebMicServer | None:
+        return self._webmic
+
+    def ensure_webmic(self) -> WebMicServer:
+        """Arranca (si hace falta) el servidor del micrófono virtual y lo devuelve."""
+        if self._webmic is None:
+            self._webmic = self._webmic_factory(self.events.on_webmic_clients)
+        if not self._webmic.running:
+            try:
+                self._webmic.start()
+            except RuntimeError as exc:
+                raise EngineError(str(exc)) from exc
+        return self._webmic
 
     def _teardown(self) -> None:
         if self._capture is not None:

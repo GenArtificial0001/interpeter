@@ -494,3 +494,88 @@ def test_si_el_clonado_rapido_falla_tambien_se_vuelve_a_la_voz_rapida():
     eng.load()
     assert intentos == ["clone_fast", "fast"] and eng.state is EngineState.READY
     assert "voz rápida" in errores[0]
+
+
+# -- salida al navegador (micrófono virtual de Teams web) --------------------------------------------------
+
+
+class FakeWebMic:
+    def __init__(self, on_clients_changed=None):
+        self.on_clients_changed = on_clients_changed
+        self.running, self.clients, self.pushes, self.flushes, self.stopped = False, 1, [], 0, False
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running, self.stopped = False, True
+
+    def push(self, audio, rate):
+        self.pushes.append((len(audio), rate))
+        return self.clients
+
+    def flush(self):
+        self.flushes += 1
+
+
+def test_en_modo_navegador_el_audio_va_al_micro_virtual_y_no_a_un_dispositivo():
+    creados = []
+
+    def fabrica(cb):
+        creados.append(FakeWebMic(cb))
+        return creados[0]
+
+    eng = Engine(
+        EngineConfig(output_mode="browser"),
+        EngineEvents(),
+        fake_backends,
+        FakeCapture,
+        lambda *a, **k: pytest.fail("no debía abrir un dispositivo de salida"),
+        webmic_factory=fabrica,
+    )
+    eng.load()
+    holder = {}
+    original = eng._capture_factory
+    eng._capture_factory = lambda *a, **k: holder.setdefault("cap", original(*a, **k))
+    eng.start()
+    assert creados and creados[0].running
+    holder["cap"].on_segment(seg())
+    assert wait_for(lambda: creados[0].pushes)
+    eng.stop()
+    assert creados[0].flushes >= 1  # al parar se vacía lo pendiente en la extensión
+    eng.close()
+    assert creados[0].stopped
+
+
+def test_el_modo_dispositivo_no_arranca_el_servidor_del_navegador():
+    creados = []
+    eng = Engine(
+        EngineConfig(output_mode="device"),
+        EngineEvents(),
+        fake_backends,
+        FakeCapture,
+        FakePlayer,
+        webmic_factory=lambda cb: creados.append(1) or FakeWebMic(cb),
+    )
+    eng.load()
+    eng.start()
+    eng.stop()
+    assert creados == []
+
+
+def test_un_puerto_ocupado_se_informa_como_error_del_motor():
+    class Roto(FakeWebMic):
+        def start(self):
+            raise RuntimeError("No se pudo abrir el puerto 8765: ocupado")
+
+    eng = Engine(
+        EngineConfig(output_mode="browser"),
+        EngineEvents(),
+        fake_backends,
+        FakeCapture,
+        FakePlayer,
+        webmic_factory=lambda cb: Roto(cb),
+    )
+    eng.load()
+    with pytest.raises(EngineError, match="puerto"):
+        eng.start()

@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..audio.calibrate import LoopbackReport, run_loopback_test
+from ..audio.calibrate import LoopbackReport, make_tone, run_loopback_test
 from ..audio.devices import AudioDevice, device_signature, scan_devices
 from ..audio.voice_sample import record
 from ..engine import (
@@ -56,6 +56,9 @@ STATE_TEXT = {
     EngineState.RUNNING: "Interpretando",
     EngineState.ERROR: "Error",
 }
+
+BROWSER_OUTPUT = "browser"  # dato del elemento especial de la lista de salidas
+BROWSER_LABEL = "Micrófono virtual del navegador (Teams web)"
 
 MUTE_OFF_TEXT = "Silenciar"
 MUTE_ON_TEXT = "🔇 SILENCIADO · reanudar"
@@ -130,6 +133,7 @@ class Bridge(QObject):
     loop = Signal(object)
     segment = Signal(float)
     dropped = Signal(str, float)
+    webmic = Signal(int)
 
     def events(self) -> EngineEvents:
         return EngineEvents(
@@ -140,6 +144,7 @@ class Bridge(QObject):
             on_translation=self.translation.emit,
             on_segment=self.segment.emit,
             on_dropped=self.dropped.emit,
+            on_webmic_clients=self.webmic.emit,
             on_error=self.error.emit,
         )
 
@@ -199,6 +204,7 @@ class MainWindow(QMainWindow):
         self._bridge.error.connect(self._on_error)
         self._bridge.loop.connect(self._on_loop_result)
         self._bridge.dropped.connect(self._on_dropped)
+        self._bridge.webmic.connect(self._on_webmic_clients)
         self._bridge.segment.connect(
             lambda sec: self._log("🎙", f"frase detectada ({sec:.1f} s), traduciendo…")
         )
@@ -292,13 +298,17 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.cmb_input, 1, 0)
         grid.addWidget(self.cmb_output, 1, 1)
         audio_lay.addLayout(grid)
+        self.lbl_browser = QLabel()
+        self.lbl_browser.setWordWrap(True)
+        self.lbl_browser.hide()
+        audio_lay.addWidget(self.lbl_browser)
         self.lbl_warning = QLabel()
         self.lbl_warning.setObjectName("warning")
         self.lbl_warning.setWordWrap(True)
         self.lbl_warning.hide()
         audio_lay.addWidget(self.lbl_warning)
         self.cmb_input.currentIndexChanged.connect(self._check_devices)
-        self.cmb_output.currentIndexChanged.connect(self._check_devices)
+        self.cmb_output.currentIndexChanged.connect(self._on_output_changed)
         self.level_bar = QProgressBar()
         self.level_bar.setRange(0, 100)
         self.level_bar.setTextVisible(False)
@@ -467,6 +477,8 @@ class MainWindow(QMainWindow):
             combo.clear()
             for d in devices:
                 combo.addItem(d.name, d.index)
+            if combo is self.cmb_output:  # al final: solo se usa si el usuario la elige expresamente
+                combo.addItem(BROWSER_LABEL, BROWSER_OUTPUT)
             idx = combo.findText(keep) if keep else -1
             combo.setCurrentIndex(idx if idx >= 0 else 0)
             combo.blockSignals(False)
@@ -481,6 +493,8 @@ class MainWindow(QMainWindow):
         if not inp or check_devices(inp, out).ok:
             return
         for i in range(self.cmb_output.count()):
+            if self.cmb_output.itemData(i) == BROWSER_OUTPUT:
+                continue  # la salida al navegador nunca se elige sola
             if check_devices(inp, self.cmb_output.itemText(i)).ok:
                 self.cmb_output.setCurrentIndex(i)
                 return
@@ -560,8 +574,42 @@ class MainWindow(QMainWindow):
         s.setValue("output", self.cmb_output.currentText())
         s.setValue("reference", self.engine.config.reference_wav or "")
 
+    def _output_is_browser(self) -> bool:
+        return self.cmb_output.currentData() == BROWSER_OUTPUT
+
+    def _on_output_changed(self) -> None:
+        self._check_devices()
+        self._refresh_browser_status()
+
+    def _refresh_browser_status(self) -> None:
+        """Arranca el micrófono virtual al elegirlo y muestra si hay un navegador conectado."""
+        if not self._output_is_browser():
+            self.lbl_browser.hide()
+            self.btn_loop.setText("Probar bucle de audio")
+            return
+        self.btn_loop.setText("Enviar tono al navegador")
+        try:
+            srv = self.engine.ensure_webmic()
+        except EngineError as exc:
+            self.lbl_browser.setText("⚠ " + str(exc))
+            self.lbl_browser.show()
+            return
+        self._on_webmic_clients(srv.clients)
+
+    def _on_webmic_clients(self, n: int) -> None:
+        if not self._output_is_browser():
+            return
+        self.lbl_browser.setText(
+            f"✓ Navegador conectado ({n})"
+            if n
+            else "Esperando la extensión: abre Teams web con la extensión instalada."
+        )
+        self.lbl_browser.setStyleSheet(f"color:{theme.ACCENT};" if n else f"color:{theme.WARN};")
+        self.lbl_browser.show()
+
     def _check_devices(self) -> None:
-        res = check_devices(self.cmb_input.currentText() or None, self.cmb_output.currentText() or None)
+        out_name = None if self._output_is_browser() else (self.cmb_output.currentText() or None)
+        res = check_devices(self.cmb_input.currentText() or None, out_name)
         if res.warnings:
             self._show_warning(" ".join(res.warnings))
         else:
@@ -595,7 +643,9 @@ class MainWindow(QMainWindow):
         cfg.source = self.cmb_source.currentData()
         cfg.target = self.cmb_target.currentData()
         cfg.input_device = self.cmb_input.currentData()
-        cfg.output_device = self.cmb_output.currentData()
+        browser = self.cmb_output.currentData() == BROWSER_OUTPUT
+        cfg.output_mode = "browser" if browser else "device"
+        cfg.output_device = None if browser else self.cmb_output.currentData()
         cfg.pause_ms = int(self.cmb_pause.currentData())
         cfg.anti_echo = self.chk_echo.isChecked()
 
@@ -680,6 +730,9 @@ class MainWindow(QMainWindow):
         if self.engine.state is EngineState.RUNNING:
             self._set_loop_text("Detén la interpretación antes de probar el bucle.")
             return
+        if self._output_is_browser():
+            self._send_test_tone_to_browser()
+            return
         out, inp = self.cmb_output.currentData(), self.cmb_input.currentData()
         self._audio_busy = True
         self.btn_loop.setEnabled(False)
@@ -694,6 +747,25 @@ class MainWindow(QMainWindow):
                 self._bridge.loop.emit(None)
 
         threading.Thread(target=work, name="loop-test", daemon=True).start()
+
+    def _send_test_tone_to_browser(self) -> None:
+        """Manda 1,5 s de tono al micrófono virtual: se oye en Teams web si todo está bien conectado."""
+        try:
+            srv = self.engine.ensure_webmic()
+        except EngineError as exc:
+            self._set_loop_text(str(exc))
+            return
+        tone = make_tone(24000, 1.5, level_dbfs=-12.0)
+        n = srv.push(tone, 24000)
+        if n:
+            self._set_loop_text(
+                f"✓ Tono enviado a {n} navegador(es): en una llamada de prueba de Teams web se oye."
+            )
+        else:
+            self._set_loop_text(
+                "⚠ No hay ningún navegador conectado. Instala la extensión y abre Teams web "
+                "(ver browser-extension/README.md)."
+            )
 
     def _set_loop_text(self, text: str) -> None:
         self.lbl_loop.setText(text)

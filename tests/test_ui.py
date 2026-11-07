@@ -202,7 +202,7 @@ def test_detecta_un_auricular_conectado_con_la_app_abierta(app, settings):
     estado = {"in": [_dev(1, "Micrófono")], "out": [_dev(2, "Altavoces")]}
     win = MainWindow(_builder, settings=settings, device_scanner=_scanner(estado))
     pump(app, lambda: win.btn_toggle.isEnabled())
-    assert win.cmb_input.count() == 1 and win.cmb_output.count() == 1
+    assert win.cmb_input.count() == 1 and win.cmb_output.count() == 2  # + «navegador»
 
     estado["in"].append(_dev(3, "Headset (WL5024)"))
     estado["out"].append(_dev(4, "Headphones (WL5024)"))
@@ -514,4 +514,107 @@ def test_sin_coqui_los_dos_perfiles_clonados_quedan_desactivados(app, settings):
         assert "no instalado" in win.cmb_profile.itemText(idx)
         assert not win.cmb_profile.model().item(idx).isEnabled()
     assert win.cmb_profile.model().item(win.cmb_profile.findData("fast")).isEnabled()
+    win.close()
+
+
+# -- micrófono virtual del navegador ---------------------------------------------------------
+
+
+class _FakeWebMic:
+    def __init__(self, cb):
+        self.cb, self.running, self.clients, self.pushes = cb, False, 0, []
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def push(self, audio, rate):
+        self.pushes.append((len(audio), rate))
+        return self.clients
+
+    def flush(self): ...
+
+
+def _builder_web(holder):
+    def build(config, events):
+        eng = Engine(
+            config,
+            events,
+            lambda c: (FakeSTT(), FakeMT(), FakeTTS(chunks=1)),
+            _Cap,
+            _Ply,
+            webmic_factory=lambda cb: holder.setdefault("srv", _FakeWebMic(cb)),
+        )
+        return eng
+
+    return build
+
+
+def _choose_browser(win):
+    win.cmb_output.setCurrentIndex(win.cmb_output.findData("browser"))
+
+
+def test_la_salida_navegador_esta_en_la_lista_pero_no_es_la_predeterminada(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    idx = win.cmb_output.findData("browser")
+    assert idx == win.cmb_output.count() - 1 and "navegador" in win.cmb_output.itemText(idx).lower()
+    assert win.cmb_output.currentData() != "browser"
+    win.close()
+
+
+def test_elegir_el_navegador_arranca_el_servidor_y_muestra_el_estado(app, settings):
+    holder = {}
+    win = MainWindow(_builder_web(holder), settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert "srv" not in holder  # sin elegirlo no se abre ningún puerto
+    _choose_browser(win)
+    assert holder["srv"].running
+    assert "Esperando la extensión" in win.lbl_browser.text() and not win.lbl_browser.isHidden()
+    assert win.btn_loop.text() == "Enviar tono al navegador"
+    holder["srv"].cb(1)
+    assert pump(app, lambda: "Navegador conectado (1)" in win.lbl_browser.text())
+    win.close()
+
+
+def test_en_modo_navegador_la_configuracion_del_motor_cambia(app, settings):
+    holder = {}
+    win = MainWindow(_builder_web(holder), settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    _choose_browser(win)
+    win.btn_toggle.click()
+    assert win.engine.config.output_mode == "browser" and win.engine.config.output_device is None
+    win.btn_toggle.click()
+    win.cmb_output.setCurrentIndex(0)
+    win.btn_toggle.click()
+    assert win.engine.config.output_mode == "device"
+    win.btn_toggle.click()
+    win.close()
+
+
+def test_el_boton_de_prueba_envia_un_tono_al_navegador(app, settings):
+    holder = {}
+    win = MainWindow(_builder_web(holder), settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    _choose_browser(win)
+    win.btn_loop.click()
+    assert "No hay ningún navegador" in win.lbl_loop.text()
+    holder["srv"].clients = 2
+    win.btn_loop.click()
+    assert "Tono enviado a 2" in win.lbl_loop.text()
+    n, rate = holder["srv"].pushes[-1]
+    assert rate == 24000 and n == int(24000 * 1.5)
+    win.close()
+
+
+def test_el_modo_navegador_no_dispara_el_aviso_de_mismo_equipo(app, settings):
+    estado = {"in": [_dev(1, "Headset (WL5024)")], "out": [_dev(2, "Headphones (WL5024)")]}
+    holder = {}
+    win = MainWindow(_builder_web(holder), settings=settings, device_scanner=_scanner(estado))
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert not win.lbl_warning.isHidden()  # mismo auricular: aviso
+    _choose_browser(win)
+    assert win.lbl_warning.isHidden()  # con el navegador como salida ya no aplica
     win.close()
