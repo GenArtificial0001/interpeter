@@ -31,7 +31,7 @@ descarta en lugar de acumular retraso.
 ```bash
 python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[ml,ui,ov,dev]"
-.venv\Scripts\python -m interpreter          # abre la aplicación
+.venv\Scripts\python -m interpreter          # abre la aplicación (o doble clic en "Iniciar Interpreter.bat")
 .venv\Scripts\python -m pytest               # pruebas (sin modelos)
 ```
 
@@ -69,3 +69,9 @@ src/interpreter/    motor (audio, VAD, pipeline, etapas, engine) y ui/ (PySide6)
 tests/              pruebas unitarias; test_integration_models.py con modelos reales (INTERPRETER_TEST_MODELS=1)
 docs/plans/         diseño, plan de implementación y análisis de repos de referencia
 ```
+
+## Cómo abrirla
+
+Doble clic en **`Iniciar Interpreter.bat`** (sin consola; registros en `logs\interpreter.log`). Si algo falla,
+**`Iniciar Interpreter (consola).bat`** muestra los mensajes. El `.exe` de `build/dist` es una versión
+anterior y no se actualiza solo: se regenera con PyInstaller cuando haga falta.
