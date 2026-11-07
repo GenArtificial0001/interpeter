@@ -171,8 +171,24 @@ class XTTSClone(TTSBackend):
 
         self.sample_rate = 24000
         self.reference = str(reference_wav)
-        self._tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        self._model = tts.synthesizer.tts_model
+        # La huella de la voz se calcula UNA vez al crear el backend, no en cada frase.
+        self._gpt_cond_latent, self._speaker_embedding = self._model.get_conditioning_latents(
+            audio_path=[self.reference]
+        )
 
-    def synthesize(self, text: str, language: str) -> Iterator[np.ndarray]:
-        wav = self._tts.tts(text=text, speaker_wav=self.reference, language=language)
-        yield np.asarray(wav, dtype=np.float32)
+    def synthesize(self, text: str, language: str, chunk_size: int = 20) -> Iterator[np.ndarray]:
+        """Streaming: cada trozo sale en cuanto está listo, sin esperar a la frase completa."""
+        import torch
+
+        with torch.inference_mode():
+            for chunk in self._model.inference_stream(
+                text,
+                language,
+                self._gpt_cond_latent,
+                self._speaker_embedding,
+                stream_chunk_size=chunk_size,
+                enable_text_splitting=False,
+            ):
+                yield chunk.detach().cpu().numpy().astype(np.float32)

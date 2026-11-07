@@ -28,8 +28,39 @@ Decisiones derivadas:
 - [x] Esqueleto, `pyproject.toml`, `.gitignore`, git local.
 - [x] Interfaces de etapa, `StageRunner` (hilos + colas + cancelación), `Pipeline`, `Segmenter` (VAD).
 - [x] Pruebas unitarias del VAD, la cancelación y el pipeline con backends falsos.
-- [ ] `python -m interpreter.bench`: tiempos reales de STT, MT y TTS en el Core Ultra 5.
+- [x] `python -m interpreter.bench`: tiempos reales de STT, MT y TTS en el Core Ultra 5.
 - [ ] Decisión con datos: modelo STT, perfil clonado sí/no, y cuánta CPU queda para Teams.
+
+**Resultados (2026-11-07, Core Ultra 5 238V, CPU, Python 3.13, torch 2.14, perfil rápido sin clonar,
+frases de 2–7 s, mediana sin calentamiento, etapas en serie):**
+
+| Configuración | STT | Traducción | TTS (1.er audio) | Fin de habla → audio |
+|---|---|---|---|---|
+| Whisper-base fp32, NLLB-600M fp32, 2 haces | 1,60 s | 1,09 s | 0,90 s | **3,6 s** |
+| Whisper-base int8, NLLB-600M int8, voraz | 1,25 s | 0,56 s | 0,82 s | **2,6 s** |
+
+- La cuantización int8 y la búsqueda voraz bajaron ~1 s, pero Whisper-base int8 falló una palabra
+  («apolizado»); falta evaluar con tu voz real y probar `small` (más preciso, más lento).
+- Carga de modelos en frío: ~2 min la primera vez (descarga); ~25 s con caché.
+- Siguiente palanca de latencia: **no esperar a la frase completa**. Traducir y sintetizar por
+  cláusulas (cortes de coma y pausa corta del VAD) y solapar etapas puede bajar el retraso percibido
+  por debajo de ~1,5 s aunque cada etapa tarde lo mismo.
+**Perfil clonado (XTTSv2 en CPU, mismo equipo; el usuario aceptó la licencia CPML el 2026-11-07).**
+Entorno aparte `.venv-clone` (coqui-tts exige `transformers<5` y `torchaudio`, que en el índice de Ford
+solo existe hasta torch 2.7.1). Referencia de voz: una muestra sintética (solo sirve para tiempos).
+
+| Variante | 1.er audio del TTS | TTS completo | Fin de habla → 1.er audio | RTF |
+|---|---|---|---|---|
+| XTTS sin streaming, huella recalculada en cada frase | 5,6 s | 5,6 s | **6,6 s** | 1,75 |
+| XTTS en streaming, huella calculada una sola vez | 1,8 s | 6,0 s (mediana; hasta 15 s) | **3,2 s** (2,4–3,9) | 2,0–2,6 |
+
+- El streaming y la huella única bajan el primer audio de 6,6 s a ~3,2 s.
+- Pero el **RTF es 2,0–2,6**: generar 1 s de voz cuesta más de 2 s de CPU, así que una frase de 3 s tarda
+  ~7 s en completarse y la reproducción se corta a mitad. **No es sostenible en tiempo real en CPU.**
+- Conclusión provisional: en esta PC la voz clonada sirve para frases muy cortas o con un búfer de
+  reproducción grande (más latencia); el uso en vivo debe ser el perfil rápido. Para clonar en vivo hace
+  falta aceleración (GPU Intel Arc con torch XPU u OpenVINO, no disponibles en el índice hoy) o un modelo
+  de clonación más liviano. Se pedirá a IT: `openvino-genai`, `optimum[openvino]` y el torch XPU.
 
 ### Hito 1 — Pipeline por línea de comandos
 - `interpreter-cli`: WAV de entrada → WAV de salida con el pipeline real y las métricas por etapa.
