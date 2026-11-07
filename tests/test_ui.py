@@ -457,3 +457,30 @@ def test_si_el_motor_cae_al_perfil_rapido_el_selector_lo_refleja(app, settings):
     assert win.cmb_profile.currentData() == "fast"
     assert "voz rápida" in win.log.toPlainText()
     win.close()
+
+
+def test_el_control_anti_eco_llega_al_motor_y_se_recuerda(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    assert win.chk_echo.isChecked()  # activado por defecto
+    win.chk_echo.setChecked(False)
+    win.btn_toggle.click()
+    assert win.engine.config.anti_echo is False
+    win.btn_toggle.click()
+    win.close()
+    win2 = MainWindow(_builder, load_on_start=False, settings=settings)
+    assert not win2.chk_echo.isChecked()
+    win2.close()
+
+
+def test_los_avisos_de_eco_e_idioma_se_ven(app, settings):
+    win = MainWindow(_builder, settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    for motivo, texto in (
+        ("idioma_distinto", "eco de la traducción"),
+        ("poca_confianza", "poco claro"),
+        ("eco", "mientras sonaba"),
+    ):
+        win._on_dropped(motivo, 1.5)
+        assert texto in win.log.toPlainText()
+    win.close()

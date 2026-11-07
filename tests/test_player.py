@@ -89,3 +89,17 @@ def test_un_error_del_dispositivo_se_informa_en_vez_de_perderse():
     assert _wait(lambda: errores)
     p.stop()
     assert "dispositivo ocupado" in errores[0] and "salida elegida" in errores[0]
+
+
+def test_busy_until_cubre_lo_encolado_mas_la_cola_de_eco():
+    from interpreter.audio.io import ECHO_TAIL_S
+
+    sd = FakeSD(48000)
+    p = Player(None, _feeder([_chunk(16000, 0.5), _chunk(24000, 0.5)]), sd_module=sd)
+    antes = time.monotonic()
+    p.start()
+    assert _wait(lambda: p.played_chunks == 2)
+    p.stop()
+    # 1,0 s de audio en total + la cola de eco, contado desde que se encoló el primer trozo
+    assert p.busy_until >= antes + 1.0 + ECHO_TAIL_S - 0.05
+    assert p.busy_until <= time.monotonic() + 1.0 + ECHO_TAIL_S

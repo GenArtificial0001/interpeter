@@ -102,3 +102,20 @@ def test_es_a_en_con_modelos_reales():
         f"\n  original: {original[0]}\n  traducción: {trad[0]}"
         f"\n  1.er audio: {metrics[0].first_audio_from_speech_end:.2f} s"
     )
+
+
+def test_el_filtro_de_whisper_separa_voz_real_de_eco_y_ruido():
+    """Voz en español: pasa. Eco en inglés y ruido: se rechazan (medido con modelos reales)."""
+    from interpreter.stages.backends import MMSTTS, WhisperSTT
+
+    tts = MMSTTS()
+    stt = WhisperSTT("openai/whisper-base")
+    es = next(iter(tts.synthesize("Necesito que revisemos el plan de entregas de esta semana.", "es")))
+    en = next(iter(tts.synthesize("I need us to review this week's delivery plan.", "en")))
+    rng = np.random.default_rng(0)
+    ruido = rng.normal(0, 10 ** (-50 / 20), 16000 * 3).astype(np.float32)
+
+    assert "plan" in stt.transcribe(es, tts.sample_rate, "es").lower() and stt.last_reject is None
+    assert stt.transcribe(en, tts.sample_rate, "es") == "" and stt.last_reject == "idioma"
+    assert stt.transcribe(ruido, 16000, "es") == "" and stt.last_reject in ("idioma", "confianza")
+    assert stt.transcribe(np.zeros(16000 * 3, dtype=np.float32), 16000, "es") == ""

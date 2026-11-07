@@ -13,6 +13,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -298,6 +299,14 @@ class MainWindow(QMainWindow):
             "completas pero tarda más."
         )
         tools.addWidget(self.cmb_pause)
+        self.chk_echo = QCheckBox("Anti-eco")
+        self.chk_echo.setChecked(True)
+        self.chk_echo.setToolTip(
+            "Ignora lo que el micrófono capte mientras suena la traducción. Evita que la app se escuche a "
+            "sí misma y entre en bucle. Si la salida va por cable a Teams (sin sonido en tu sala), puedes "
+            "desactivarlo para poder hablar encima de la traducción."
+        )
+        tools.addWidget(self.chk_echo)
         tools.addStretch()
         self.btn_loop = QPushButton("Probar bucle de audio")
         self.btn_loop.setToolTip(
@@ -513,6 +522,7 @@ class MainWindow(QMainWindow):
             idx = combo.findText(str(s.value(key, "", type=str)))
             if idx >= 0:
                 combo.setCurrentIndex(idx)
+        self.chk_echo.setChecked(bool(s.value("anti_echo", True, type=bool)))
         ref = str(s.value("reference", "", type=str))
         if ref:
             self.engine.config.reference_wav = ref
@@ -526,6 +536,7 @@ class MainWindow(QMainWindow):
         s.setValue("target", self.cmb_target.currentData())
         s.setValue("profile", self.cmb_profile.currentData())
         s.setValue("pause", self.cmb_pause.currentData())
+        s.setValue("anti_echo", self.chk_echo.isChecked())
         s.setValue("stt", self.cmb_stt.currentData())
         s.setValue("accel", self.cmb_accel.currentData())
         s.setValue("input", self.cmb_input.currentText())
@@ -569,6 +580,7 @@ class MainWindow(QMainWindow):
         cfg.input_device = self.cmb_input.currentData()
         cfg.output_device = self.cmb_output.currentData()
         cfg.pause_ms = int(self.cmb_pause.currentData())
+        cfg.anti_echo = self.chk_echo.isChecked()
 
     def _toggle(self) -> None:
         if self.engine.state is EngineState.RUNNING:
@@ -722,6 +734,12 @@ class MainWindow(QMainWindow):
             "traduccion_vacia": ("⚠", "la traducción salió vacía; esa frase no se dirá."),
             "sin_audio": ("⚠", "se tradujo pero no se generó audio para esa frase."),
             "cola": ("⚠", "voy atrasado: descarté una frase anterior (el reconocimiento no da abasto)."),
+            "idioma_distinto": (
+                "🔁",
+                "ignoré un sonido que no es voz en tu idioma (eco de la traducción o ruido).",
+            ),
+            "poca_confianza": ("🔁", "ignoré un sonido poco claro (ruido o murmullo), no parecía una frase."),
+            "eco": ("🔁", f"ignoré {seconds:.1f} s de audio captado mientras sonaba la traducción (eco)."),
         }
         icono, texto = textos.get(reason, ("⚠", f"frase descartada ({reason})."))
         self._log(icono, texto)
@@ -745,6 +763,7 @@ class MainWindow(QMainWindow):
             self.cmb_output,
             self.cmb_profile,
             self.cmb_pause,
+            self.chk_echo,
             self.cmb_stt,
             self.cmb_accel,
             self.btn_ref,

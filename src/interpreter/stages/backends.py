@@ -91,6 +91,10 @@ class WhisperSTT(STTBackend):
     """
 
     device = "CPU"
+    # Umbrales medidos con voz real, eco en inglés y ruido: la voz en el idioma esperado da
+    # p(idioma) ≈ 0,97–1,0 y logprob ≈ -0,1…-0,3; el eco y el ruido dan p(idioma) ≤ 0,02.
+    min_language_prob = 0.35
+    min_avg_logprob = -1.0
 
     def __init__(
         self, model: str = "openai/whisper-base", threads: int | None = None, quantize: bool = False
@@ -108,14 +112,42 @@ class WhisperSTT(STTBackend):
         self._model = WhisperForConditionalGeneration.from_pretrained(model, dtype=torch.float32).eval()
         if quantize:
             self._model = quantize_int8(self._model)
+        self.last_reject: str | None = None  # motivo del último rechazo: "idioma", "confianza" o None
+        self.last_stats: dict[str, float] = {}
 
     def transcribe(self, audio: np.ndarray, sample_rate: int, language: str) -> str:
+        """Texto reconocido, o ``""`` si no parece voz en ``language`` (eco, ruido, alucinación)."""
         audio16 = _resample(audio, sample_rate, 16000)
         feats = self._fe(audio16, sampling_rate=16000, return_tensors="pt").input_features
         max_tokens = int(min(200, audio16.size / 16000 * 8 + 20))  # corta repeticiones descontroladas
+        gc = self._model.generation_config
         with self._torch.inference_mode():
-            ids = self._model.generate(feats, language=language, task="transcribe", max_new_tokens=max_tokens)
-        return str(self._tok.batch_decode(ids, skip_special_tokens=True)[0])
+            enc = self._model.model.encoder(feats)  # una sola vez: sirve para el idioma y para generar
+            start = self._torch.tensor([[gc.decoder_start_token_id]])
+            probs = self._torch.softmax(
+                self._model(encoder_outputs=enc, decoder_input_ids=start).logits[0, -1].float(), -1
+            )
+            lang_ids = list(gc.lang_to_id.values())
+            target = gc.lang_to_id.get(f"<|{language}|>")
+            p_lang = float(probs[target] / probs[lang_ids].sum()) if target is not None else 1.0
+            out = self._model.generate(
+                encoder_outputs=enc,
+                language=language,
+                task="transcribe",
+                max_new_tokens=max_tokens,
+                return_dict_in_generate=True,
+                output_scores=True,
+            )
+            steps = self._model.compute_transition_scores(out.sequences, out.scores, normalize_logits=True)
+            avg_logprob = float(steps[0].mean()) if steps.numel() else 0.0
+            text = str(self._tok.batch_decode(out.sequences, skip_special_tokens=True)[0]).strip()
+        self.last_stats = {"p_idioma": p_lang, "logprob": avg_logprob}
+        self.last_reject = None
+        if p_lang < self.min_language_prob:
+            self.last_reject = "idioma"
+        elif avg_logprob < self.min_avg_logprob:
+            self.last_reject = "confianza"
+        return "" if self.last_reject else text
 
 
 def openvino_devices() -> list[str]:

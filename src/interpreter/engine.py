@@ -11,6 +11,7 @@ import enum
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -48,6 +49,7 @@ class EngineConfig:
     mt_model: str = "facebook/nllb-200-distilled-600M"
     quantize: bool = True  # int8 en la traducción
     stt_quantize: bool = False  # int8 en Whisper cambió alguna palabra en las pruebas: desactivado
+    anti_echo: bool = True  # ignorar frases que empiezan mientras suena la traducción (evita bucles de eco)
     accelerator: str = "auto"  # "auto" (GPU Intel con OpenVINO si existe) | "cpu"
     beams: int = 1
     tts_profile: str = "fast"  # "fast" (sin clonar) | "clone" (XTTSv2)
@@ -274,6 +276,15 @@ class Engine:
     def set_muted(self, muted: bool) -> None:
         self.muted = muted
 
+    def _started_during_playback(self, seg: SpeechSegment) -> bool:
+        """¿La frase empezó antes de que terminara de sonar la traducción? (el micrófono oyó la salida)."""
+        busy_until = getattr(self._player, "busy_until", 0.0)
+        if not busy_until:
+            return False
+        pause_s = self.config.pause_ms / 1000.0
+        started = time.monotonic() - seg.audio.size / seg.sample_rate - pause_s
+        return started < busy_until
+
     def _on_pipeline_drop(self, reason: str) -> None:
         log.info("Frase sin resultado: %s", reason)
         self.events.on_dropped(reason, 0.0)
@@ -299,6 +310,11 @@ class Engine:
             self.segments_dropped += 1
             log.info("Frase de %.1f s ignorada: micrófono silenciado", seconds)
             self.events.on_dropped("silenciado", seconds)
+            return
+        if self.config.anti_echo and self._started_during_playback(seg):
+            self.segments_dropped += 1
+            log.info("Frase de %.1f s ignorada: empezó mientras sonaba la traducción (posible eco)", seconds)
+            self.events.on_dropped("eco", seconds)
             return
         self.segments_sent += 1
         log.info("Frase detectada: %.1f s", seconds)

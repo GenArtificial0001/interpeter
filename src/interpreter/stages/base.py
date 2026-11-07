@@ -65,7 +65,11 @@ class STTStage:
                 self.on_text(text)
             yield Transcript(text, self.language, seg.generation, seg.timings)
         elif self.on_drop is not None:
-            self.on_drop("sin_texto")  # ruido, murmullo o voz demasiado baja: no se entendió nada
+            # idioma distinto (eco de la propia salida), poca confianza (ruido) o texto vacío
+            reason = getattr(self.backend, "last_reject", None)
+            self.on_drop(
+                {"idioma": "idioma_distinto", "confianza": "poca_confianza"}.get(reason or "", "sin_texto")
+            )
 
 
 class MTStage:

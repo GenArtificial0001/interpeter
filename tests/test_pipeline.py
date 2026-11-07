@@ -120,3 +120,21 @@ def test_cada_etapa_avisa_cuando_no_produce_nada():
         finally:
             p.stop()
         assert motivos == [esperado], (esperado, motivos)
+
+
+def test_el_motivo_del_rechazo_del_reconocedor_llega_al_aviso():
+    from interpreter.stages.base import STTBackend, STTStage
+
+    class Rechaza(STTBackend):
+        def __init__(self, motivo):
+            self.last_reject = motivo
+
+        def transcribe(self, audio, sample_rate, language):
+            return ""
+
+    esperado = {"idioma": "idioma_distinto", "confianza": "poca_confianza", None: "sin_texto"}
+    for motivo, razon in esperado.items():
+        vistos = []
+        stage = STTStage(Rechaza(motivo), "es", on_drop=vistos.append)
+        assert list(stage.process(seg())) == []
+        assert vistos == [razon]

@@ -376,3 +376,49 @@ def test_un_fallo_con_el_perfil_rapido_sigue_siendo_error():
     with pytest.raises(RuntimeError):
         eng.load()
     assert eng.state is EngineState.ERROR
+
+
+# -- guarda anti-eco -------------------------------------------------------------------------------------
+
+
+def _seg_de(segundos):
+    return SpeechSegment(np.zeros(int(16000 * segundos), dtype=np.float32))
+
+
+def test_anti_eco_ignora_frases_que_empezaron_mientras_sonaba_la_traduccion():
+    caidas, enviadas = [], []
+    eng, h = make(
+        EngineEvents(on_dropped=lambda m, s: caidas.append(m), on_segment=enviadas.append),
+        EngineConfig(anti_echo=True),
+    )
+    eng.load()
+    eng.start()
+    h["ply"].busy_until = time.monotonic() + 5.0  # la traducción sigue sonando 5 s más
+    h["cap"].on_segment(_seg_de(1.0))
+    assert caidas == ["eco"] and enviadas == []
+    eng.stop()
+
+
+def test_anti_eco_deja_pasar_las_frases_que_empezaron_despues():
+    caidas, enviadas = [], []
+    eng, h = make(
+        EngineEvents(on_dropped=lambda m, s: caidas.append(m), on_segment=enviadas.append),
+        EngineConfig(anti_echo=True),
+    )
+    eng.load()
+    eng.start()
+    h["ply"].busy_until = time.monotonic() - 10.0  # terminó hace rato
+    h["cap"].on_segment(_seg_de(1.0))
+    assert wait_for(lambda: enviadas == [1.0]) and caidas == []
+    eng.stop()
+
+
+def test_anti_eco_desactivado_no_descarta_nada():
+    enviadas = []
+    eng, h = make(EngineEvents(on_segment=enviadas.append), EngineConfig(anti_echo=False))
+    eng.load()
+    eng.start()
+    h["ply"].busy_until = time.monotonic() + 5.0
+    h["cap"].on_segment(_seg_de(1.0))
+    assert wait_for(lambda: enviadas == [1.0])
+    eng.stop()

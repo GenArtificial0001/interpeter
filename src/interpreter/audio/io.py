@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -20,6 +21,7 @@ from ..vad import Segmenter
 log = logging.getLogger(__name__)
 
 TARGET_SR = 16000
+ECHO_TAIL_S = 0.6  # reverberación y retardo del micrófono tras terminar de sonar
 
 
 class MicCapture:
@@ -137,6 +139,8 @@ class Player:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.played_chunks = 0
+        self._scheduled_end = 0.0
+        self.busy_until = 0.0  # time.monotonic() en que termina de sonar lo ya encolado (+ cola de eco)
 
     def _device_rate(self) -> int:
         info = self._sd.query_devices(self.device if self.device is not None else self._sd.default.device[1])
@@ -153,6 +157,9 @@ class Player:
                 if chunk is None:
                     continue
                 audio = _resample_audio(chunk.audio, chunk.sample_rate, rate)  # type: ignore[attr-defined]
+                now = time.monotonic()
+                self._scheduled_end = max(self._scheduled_end, now) + audio.size / rate
+                self.busy_until = self._scheduled_end + ECHO_TAIL_S
                 stream.write(audio.reshape(-1, 1))
                 self.played_chunks += 1
         except Exception as exc:  # noqa: BLE001 - se informa y se registra, no se pierde en silencio
