@@ -47,6 +47,8 @@ class Pipeline:
         max_pending: int = 3,
         on_error: ErrorCallback | None = None,
         on_metrics: MetricsCallback | None = None,
+        on_transcript: Callable[[str], None] | None = None,
+        on_translation: Callable[[str], None] | None = None,
     ) -> None:
         self.cancel = CancelScope()
         self.on_metrics = on_metrics
@@ -55,12 +57,22 @@ class Pipeline:
         q_text: queue.Queue = queue.Queue()
         q_tr: queue.Queue = queue.Queue()
         self.audio_out: queue.Queue = queue.Queue()
+        self._mt_stage = MTStage(mt, target_language, on_translation)
+        stt_stage = STTStage(stt, source_language, on_transcript)
         self._runners = [
-            StageRunner(STTStage(stt, source_language), self._in, q_text, self.cancel, on_error),
-            StageRunner(MTStage(mt, target_language), q_text, q_tr, self.cancel, on_error),
+            StageRunner(stt_stage, self._in, q_text, self.cancel, on_error),
+            StageRunner(self._mt_stage, q_text, q_tr, self.cancel, on_error),
             StageRunner(TTSStage(tts), q_tr, self.audio_out, self.cancel, on_error),
         ]
         self.sample_rate = tts.sample_rate
+
+    @property
+    def target_language(self) -> str:
+        return self._mt_stage.target
+
+    def set_target_language(self, language: str) -> None:
+        """Cambia el idioma de salida en caliente: aplica desde el siguiente enunciado."""
+        self._mt_stage.target = language
 
     def start(self) -> None:
         for r in self._runners:

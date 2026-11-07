@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from time import perf_counter
 
 import numpy as np
@@ -40,9 +40,12 @@ class TTSBackend(ABC):
 class STTStage:
     name = "stt"
 
-    def __init__(self, backend: STTBackend, language: str) -> None:
+    def __init__(
+        self, backend: STTBackend, language: str, on_text: Callable[[str], None] | None = None
+    ) -> None:
         self.backend = backend
         self.language = language
+        self.on_text = on_text
 
     def process(self, seg: SpeechSegment) -> Iterator[Transcript]:
         t0 = perf_counter()
@@ -50,23 +53,29 @@ class STTStage:
         seg.timings.stt = perf_counter() - t0
         seg.timings.stt_done_at = perf_counter()
         if text:
+            if self.on_text is not None:
+                self.on_text(text)
             yield Transcript(text, self.language, seg.generation, seg.timings)
 
 
 class MTStage:
     name = "mt"
 
-    def __init__(self, backend: MTBackend, target: str) -> None:
+    def __init__(self, backend: MTBackend, target: str, on_text: Callable[[str], None] | None = None) -> None:
         self.backend = backend
-        self.target = target
+        self.target = target  # se puede cambiar en caliente desde otro hilo (asignación atómica)
+        self.on_text = on_text
 
     def process(self, tr: Transcript) -> Iterator[Translation]:
+        target = self.target
         t0 = perf_counter()
-        text = self.backend.translate(tr.text, tr.language, self.target).strip()
+        text = self.backend.translate(tr.text, tr.language, target).strip()
         tr.timings.mt = perf_counter() - t0
         tr.timings.mt_done_at = perf_counter()
         if text:
-            yield Translation(text, tr.language, self.target, tr.generation, tr.timings)
+            if self.on_text is not None:
+                self.on_text(text)
+            yield Translation(text, tr.language, target, tr.generation, tr.timings)
 
 
 class TTSStage:

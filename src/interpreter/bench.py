@@ -109,16 +109,26 @@ def main(argv: list[str] | None = None) -> int:
             first, total, dur_out, _ = _first_and_total(tts, trad, args.target)
             e2e = t_stt + t_mt + first
             row = {
-                "frase": texto_ref, "rep": rep, "dur_in_s": round(dur_in, 2), "stt_s": round(t_stt, 3),
-                "mt_s": round(t_mt, 3), "tts_primer_audio_s": round(first, 3), "tts_total_s": round(total, 3),
-                "dur_out_s": round(dur_out, 2), "e2e_s": round(e2e, 3),
+                "frase": texto_ref,
+                "rep": rep,
+                "dur_in_s": round(dur_in, 2),
+                "stt_s": round(t_stt, 3),
+                "mt_s": round(t_mt, 3),
+                "tts_primer_audio_s": round(first, 3),
+                "tts_total_s": round(total, 3),
+                "dur_out_s": round(dur_out, 2),
+                "e2e_s": round(e2e, 3),
                 "rtf_tts": round(total / dur_out, 2) if dur_out else None,
-                "texto_stt": texto.strip(), "traduccion": trad.strip(),
+                "texto_stt": texto.strip(),
+                "traduccion": trad.strip(),
             }
             rows.append(row)
             tag = "(calentamiento)" if rep == 0 and args.repeat > 1 else ""
-            print(f"  e2e={e2e:5.2f}s  stt={t_stt:4.2f} mt={t_mt:4.2f} tts1={first:4.2f}/{total:4.2f} "
-                  f"rtf={row['rtf_tts']}  {tag}\n      «{texto.strip()}» → «{trad.strip()}»", flush=True)
+            print(
+                f"  e2e={e2e:5.2f}s  stt={t_stt:4.2f} mt={t_mt:4.2f} tts1={first:4.2f}/{total:4.2f} "
+                f"rtf={row['rtf_tts']}  {tag}\n      «{texto.strip()}» → «{trad.strip()}»",
+                flush=True,
+            )
     result["frases"] = rows
 
     medidas = [r for r in rows if r["rep"] > 0] or rows
