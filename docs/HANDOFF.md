@@ -298,3 +298,10 @@ Candidatos para reemplazar «Historial» (el botón del lado derecho del orbe), 
 2. **Voz:** elegir al instante voz de hombre o de mujer (hoy está escondido en la ventana clásica).
 3. **Glosario:** abrir el glosario o añadir un término rápido que acaba de salir mal.
 4. **Ver lo último dicho:** un subtítulo ya existe abajo del orbe, así que «Historial» solo se justifica si fuera algo distinto (p. ej. copiar la última frase).
+
+## 19. Especificaciones pendientes (escritas el 2026-11-08, SIN código)
+
+Carpeta [`docs/specs/`](specs/README.md): **A** micrófono unificado + vigilante (el micrófono «se apaga solo»), **B** orbe con carga en
+porcentaje, sonido futurista de «listo» y retraso visible, **C** Ajustes rediseñado (pequeño, menú lateral, colores Ford Blue de
+Visión; categorías Idiomas, Audio, Voces y motor, Análisis). Orden recomendado: A → B → C. Cada spec trae REQ-IDs con criterios
+de aceptación, archivos a tocar y riesgos. Decisiones abiertas con la persona en `docs/specs/README.md`.
