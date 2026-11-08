@@ -300,6 +300,7 @@ class MainWindow(QMainWindow):
         lang_lay.addLayout(row)
         outer.addWidget(lang_card)
         self.cmb_target.currentIndexChanged.connect(self._on_target_changed)
+        self.cmb_source.currentIndexChanged.connect(self._check_devices)  # borra avisos viejos de idiomas
 
         # Audio
         audio_card, audio_lay = _card()

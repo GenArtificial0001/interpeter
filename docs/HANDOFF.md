@@ -11,13 +11,17 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.2.4**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+- **Versiones al cierre:** app **0.2.5**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
   en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
 - **Lo que NO está resuelto:** los *microcortes* que oyó el interlocutor con la voz clonada rápida en una
   llamada, y la latencia (mediana 1,3–1,8 s; 3–4 s con Whisper *small* y frases largas). Ver §8 y §9.
   Se aplicaron varias mejoras (0.2.3 / 0.3.3) **que el usuario aún no ha probado**.
+
+> 0.2.5: `phrasebook.py` traduce sin el modelo las frases cortas de uso diario (NLLB las inventa: «Hello.» →
+> «¿Qué pasa?»); `clean_translation` descarta réplicas inventadas tras « - »; Whisper descarta alucinaciones
+> conocidas («Thanks for watching»); los avisos de idioma se borran al cambiar «Yo hablo».
 
 ## 2. Línea de tiempo (commits relevantes en `dev`)
 

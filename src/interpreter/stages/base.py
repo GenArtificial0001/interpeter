@@ -11,6 +11,7 @@ import numpy as np
 
 from ..messages import AudioChunk, SpeechSegment, Transcript, Translation
 from ..numbers import is_digits_only, spell_numbers
+from ..phrasebook import lookup as phrasebook_lookup
 
 
 class STTBackend(ABC):
@@ -95,6 +96,9 @@ class MTStage:
         """Traduce protegiendo los términos del glosario; si se pierde una marca, reintenta sin ella."""
         if is_digits_only(source_text):  # NLLB inventa frases con solo cifras: se dejan tal cual para la voz
             return source_text.strip()
+        exact = phrasebook_lookup(source_text, source, target)  # «Gracias», «Sí», «Hola»: sin el modelo
+        if exact is not None:
+            return exact
         g = self.glossary
         if g:
             masked, mapping = g.protect(source_text, target)

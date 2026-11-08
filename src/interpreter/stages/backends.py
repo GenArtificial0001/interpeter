@@ -179,6 +179,15 @@ class WhisperSTT(STTBackend):
             text, found = self.glossary.correct(text)
         self.last_stats = {"p_idioma": p_lang, "logprob": avg_logprob}
         self.last_reject = None
+        if is_known_hallucination(text):  # «Thanks for watching»: Whisper la inventa con ruido o silencio
+            self.last_reject = "confianza"
+            log.info(
+                "Reconocimiento: p_idioma=%.2f logprob=%.2f -> alucinación conocida: %s",
+                p_lang,
+                avg_logprob,
+                text,
+            )
+            return ""
         # Una frase con términos del glosario puede llevar mucho inglés: se tolera una probabilidad de idioma
         # baja si el reconocimiento está seguro de lo que oyó.
         mixed = (
@@ -201,15 +210,42 @@ class WhisperSTT(STTBackend):
         return "" if self.last_reject else text
 
 
+# Frases que Whisper «oye» cuando solo hay ruido o silencio (aprendidas de subtítulos de vídeos de internet).
+_HALLUCINATIONS = (
+    "thanks for watching", "thank you for watching", "thank you for listening", "please subscribe",
+    "like and subscribe", "subtitles by", "subtitles made by", "amara.org", "see you in the next video",
+    "gracias por ver", "gracias por mirar", "suscribete", "subtitulos realizados por", "subtitulos por",
+    "nos vemos en el proximo video", "obrigado por assistir", "merci d'avoir regarde", "sous-titres",
+)  # fmt: skip
+
+
+def is_known_hallucination(text: str) -> bool:
+    """¿Es una de las frases que Whisper inventa con ruido? (nadie la dice en una reunión)."""
+    from ..phrasebook import normalize
+
+    plain = normalize(text)
+    return any(h in plain for h in _HALLUCINATIONS)
+
+
 def split_sentences(text: str) -> list[str]:
     """Parte un texto en frases (tras ``. ! ?`` y un espacio). Las cifras («8.30») y siglas no se parten."""
     parts = re.split(r"(?<=[.!?])\s+(?=[\"'¿¡(]?[A-ZÁÉÍÓÚÑ0-9])", text.strip())
     return [p for p in (x.strip() for x in parts) if p] or [text.strip()]
 
 
-def clean_translation(text: str) -> str:
-    """NLLB a veces antepone un guion de diálogo ("- Bye, then."): el TTS lo leería como una pausa rara."""
-    return text.strip().lstrip("-–—").strip()
+_DASH_CONTINUATION = re.compile(r"(?<=[.!?…])\s+[-–—]\s*\S.*$", re.DOTALL)
+
+
+def clean_translation(text: str, source_text: str = "") -> str:
+    """Limpia lo que NLLB inventa: guion de diálogo inicial y una «segunda réplica» tras un guion.
+
+    Con enunciados muy cortos el modelo sigue generando un diálogo: «Gracias.» -> «Thank you. - Thank you.».
+    Si el original no lleva ese guion, lo que viene detrás de «. - » no es traducción: se descarta.
+    """
+    text = text.strip().lstrip("-–—").strip()
+    if source_text and not re.search(r"\s[-–—]\s", source_text):
+        text = _DASH_CONTINUATION.sub("", text).strip()
+    return text
 
 
 def openvino_devices() -> list[str]:
@@ -317,7 +353,7 @@ class NLLBTranslator(MTBackend):
                 max_new_tokens=int(inputs["input_ids"].shape[1] * 2.5) + 10,
                 num_beams=self.beams,
             )
-        return clean_translation(self._tok.batch_decode(out, skip_special_tokens=True)[0])
+        return clean_translation(self._tok.batch_decode(out, skip_special_tokens=True)[0], text)
 
 
 class MMSTTS(TTSBackend):
