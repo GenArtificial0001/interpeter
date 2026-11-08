@@ -8,6 +8,7 @@ Todos los eventos se emiten desde hilos de trabajo: la interfaz debe reenviarlos
 from __future__ import annotations
 
 import enum
+import inspect
 import logging
 import re
 import threading
@@ -101,6 +102,7 @@ class EngineEvents:
     on_dropped: Callable[[str, float], None] = _noop  # (motivo, duración s) de una frase que NO se tradujo
     on_error: Callable[[str], None] = _noop
     on_webmic_clients: Callable[[int], None] = _noop  # navegadores conectados al micrófono virtual
+    on_progress: Callable[[float, str], None] = _noop  # (0..1, etapa) mientras cargan los modelos
 
 
 Backends = tuple[STTBackend, MTBackend, TTSBackend]
@@ -129,7 +131,7 @@ def make_stt(cfg: EngineConfig) -> STTBackend:
     return WhisperSTT(cfg.stt_model, cfg.threads, cfg.stt_quantize)
 
 
-def default_backends(cfg: EngineConfig) -> Backends:
+def default_backends(cfg: EngineConfig, progress: Callable[[float, str], None] | None = None) -> Backends:
     """Carga los modelos reales (lento: descarga la primera vez)."""
     from .stages.backends import (
         NLLBTranslator,
@@ -139,8 +141,12 @@ def default_backends(cfg: EngineConfig) -> Backends:
     )
     from .voices import VoiceBank
 
+    report = progress or (lambda _f, _l="": None)
+    report(0.02, "Cargando el reconocimiento de voz…")
     stt = make_stt(cfg)
+    report(0.30, "Cargando el traductor…")
     mt = NLLBTranslator(cfg.mt_model, cfg.threads, cfg.quantize, cfg.beams)
+    report(0.60, "Cargando la voz…")
     if cfg.tts_profile in CLONE_PROFILES:
         reference = cfg.reference_wav or default_reference()
         if not reference:
@@ -148,6 +154,7 @@ def default_backends(cfg: EngineConfig) -> Backends:
         tts: TTSBackend = YourTTSClone(reference) if cfg.tts_profile == "clone_fast" else XTTSClone(reference)
     else:
         tts = VoiceBank(cfg.voice)
+    report(0.85, "Calentando los modelos…")
     # Cargaron bien: a partir de ahora el arranque no necesita red.
     marker = models_ready_marker()
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -209,9 +216,10 @@ class Engine:
             if self._state in (EngineState.READY, EngineState.RUNNING):
                 return
             self._set_state(EngineState.LOADING, "Cargando modelos…")
+            self._progress(0.0, "Cargando modelos…")
             try:
                 try:
-                    self._backends = self._backend_factory(self.config)
+                    self._backends = self._build_backends()
                 except Exception as exc:
                     if self.config.tts_profile not in CLONE_PROFILES:
                         raise
@@ -221,14 +229,27 @@ class Engine:
                     self.events.on_error(
                         f"El perfil clonado no está disponible ({exc}). Se usa la voz rápida sin clonar."
                     )
-                    self._backends = self._backend_factory(self.config)
+                    self._backends = self._build_backends()
                 self._warm_up(self._backends)
             except Exception as exc:
                 self._set_state(EngineState.ERROR, "No se pudieron cargar los modelos")
                 self._fail(f"No se pudieron cargar los modelos: {exc}", exc)
                 raise
             device = getattr(self._backends[0], "device", None)
+            self._progress(1.0, "Listo")
             self._set_state(EngineState.READY, f"Listo · reconocimiento en {device}" if device else "Listo")
+
+    def _progress(self, fraction: float, label: str = "") -> None:
+        self.events.on_progress(max(0.0, min(1.0, fraction)), label)
+
+    def _build_backends(self) -> Backends:
+        """Llama a la fábrica de modelos; si admite ``progress`` se lo pasa (si no, igual que antes)."""
+        factory = self._backend_factory
+        try:
+            accepts = "progress" in inspect.signature(factory).parameters
+        except (TypeError, ValueError):
+            accepts = False
+        return factory(self.config, progress=self._progress) if accepts else factory(self.config)
 
     def _warm_up(self, backends: Backends) -> None:
         """Una pasada de práctica por cada modelo: la primera inferencia real es mucho más lenta.

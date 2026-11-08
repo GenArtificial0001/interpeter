@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__
+from .. import __version__, sound
 from ..audio import sysmic
 from ..audio.calibrate import LoopbackReport, make_tone, run_loopback_test
 from ..audio.devices import AudioDevice, device_signature, scan_devices
@@ -153,6 +153,7 @@ class Bridge(QObject):
     dropped = Signal(str, float)
     webmic = Signal(int)
     voices_ready = Signal()
+    progress = Signal(float, str)
 
     def events(self) -> EngineEvents:
         return EngineEvents(
@@ -164,6 +165,7 @@ class Bridge(QObject):
             on_segment=self.segment.emit,
             on_dropped=self.dropped.emit,
             on_webmic_clients=self.webmic.emit,
+            on_progress=self.progress.emit,
             on_error=self.error.emit,
         )
 
@@ -198,8 +200,10 @@ class MainWindow(QMainWindow):
         voice_lister: Callable[[], list[SapiVoice]] = installed_sapi_voices,
         mic_control: Any = sysmic,
         ui_mode: str | None = None,
+        sound_player: Callable[[bytes], None] = sound.play_wav,
     ) -> None:
         super().__init__()
+        self._sound_player = sound_player  # suena al terminar de cargar (las pruebas lo reemplazan)
         self._mic_control = mic_control  # lista, activa/silencia y sube/baja el micrófono de Windows
         self._sys_mic: sysmic.Microphone | None = None
         self._clock = time.monotonic  # reloj del vigilante (las pruebas lo reemplazan)
@@ -241,6 +245,7 @@ class MainWindow(QMainWindow):
         self._bridge.dropped.connect(self._on_dropped)
         self._bridge.webmic.connect(self._on_webmic_clients)
         self._bridge.voices_ready.connect(self._fill_voices)
+        self._bridge.progress.connect(self._on_progress)
         self._bridge.segment.connect(
             lambda sec: self._log("🎙", f"frase detectada ({sec:.1f} s), traduciendo…")
         )
@@ -382,6 +387,14 @@ class MainWindow(QMainWindow):
         self._mic_timer.timeout.connect(self._apply_mic_volume)
         self.chk_mic_on.toggled.connect(self._on_mic_toggled)
         self.sld_mic.valueChanged.connect(self._on_mic_slider)
+        self.chk_sound = QCheckBox("Sonido al terminar de cargar")
+        self.chk_sound.setChecked(bool(self._settings.value("sound_on_ready", True, type=bool)))
+        self.chk_sound.setToolTip(
+            "Avisa con un sonido corto cuando los modelos terminaron de cargar y ya puedes interpretar."
+        )
+        self.chk_sound.toggled.connect(lambda on: self._settings.setValue("sound_on_ready", on))
+        audio_lay.addWidget(self.chk_sound)
+        self._ready_chime = sound.make_ready_chime()
         self.chk_keep_mic = QCheckBox("Mantener el micrófono activo mientras interpreto")
         self.chk_keep_mic.setChecked(bool(self._settings.value("keep_mic_alive", True, type=bool)))
         self.chk_keep_mic.setToolTip(
@@ -1191,6 +1204,7 @@ class MainWindow(QMainWindow):
         self._log(icono, texto)
 
     def _on_state(self, state: EngineState, detail: str) -> None:
+        was_loading = self._pill_state[0] is EngineState.LOADING
         if state is EngineState.READY:  # si el motor cayó al perfil rápido, el selector debe reflejarlo
             self._set_profile_combo(self.engine.config.tts_profile)
         self._pill_state = (state, detail)
@@ -1219,6 +1233,8 @@ class MainWindow(QMainWindow):
             w.setEnabled(editable)
         if not running:
             self._level = 0.0
+        if state is EngineState.READY and was_loading and self.chk_sound.isChecked():
+            self._play_ready_sound()
         if running:
             self._last_signal = self._clock()
             self._silence_warned = False
@@ -1228,6 +1244,17 @@ class MainWindow(QMainWindow):
         self._sync_orb()
 
     # -- orbe (interfaz alternativa) -------------------------------------------------------------------------
+
+    def _on_progress(self, fraction: float, label: str) -> None:
+        if self._orb is not None:
+            self._orb.set_progress(fraction, label)
+
+    def _play_ready_sound(self) -> None:
+        """Sonido de «ya puedes usarlo»: una vez, al terminar de cargar los modelos."""
+        try:
+            self._sound_player(self._ready_chime)
+        except Exception:  # noqa: BLE001 - un sonido nunca debe romper la aplicación
+            log.debug("No se pudo reproducir el sonido de listo", exc_info=True)
 
     def _on_original_text(self, text: str) -> None:
         self._log("Tú", text)
@@ -1339,6 +1366,8 @@ class MainWindow(QMainWindow):
         if m.first_audio_from_speech_end is None:
             return
         self._lat.append(m.first_audio_from_speech_end)
+        if self._orb is not None:
+            self._orb.set_latency(m.first_audio_from_speech_end, statistics.median(self._lat))
         self.lbl_delay.setText(f"{m.first_audio_from_speech_end:.1f} s")
         med = statistics.median(self._lat)
         parts = [

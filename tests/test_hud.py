@@ -700,3 +700,113 @@ def test_los_cambios_del_microfono_quedan_en_el_registro(app, settings, mic_fals
         "Micrófono: silenciado=True" in r.message and "origen=persona" in r.message for r in caplog.records
     )
     win.close()
+
+
+# -- spec B: carga en el ojo, sonido de «listo» y retraso en el orbe ---------------------------------
+
+
+def test_el_porcentaje_sube_sin_bajar_y_no_llega_a_100_antes_de_tiempo(app):
+    w = OrbWindow(400)
+    w.show()
+    w.set_mood(Mood.LOADING)
+    vistos = []
+    for fraccion in (0.02, 0.30, 0.30, 0.60, 0.85):
+        w.set_progress(fraccion, "etapa")
+        for _ in range(60):
+            w._tick()
+        vistos.append(w.progress_percent)
+    assert vistos == sorted(vistos)  # nunca baja
+    assert all(v <= 93 for v in vistos)  # «repta» como mucho +8 puntos sobre la etapa informada
+    w.set_progress(0.5)  # un valor menor que el ya informado no hace retroceder
+    w._tick()
+    assert w.progress_percent >= vistos[-1]
+    w.set_progress(1.0, "Listo")
+    assert w.progress_percent == 100
+    w.close()
+
+
+def test_el_anillo_y_el_numero_se_dibujan_durante_la_carga(app):
+    w = OrbWindow(400)
+    w.show()
+    w.set_mood(Mood.LOADING)
+    w.set_progress(0.5, "Cargando el traductor…")
+    for _ in range(80):
+        w._tick()
+    assert w._vu > 0 and w.stage_label == "Cargando el traductor…"
+    assert render(w).pixelColor(w.width() // 2, w.height() // 2).alpha() > 200
+    w.close()
+
+
+def test_el_retraso_se_muestra_con_su_color_de_umbral(app):
+    w = OrbWindow(400)
+    assert w.latency is None
+    w.set_latency(1.2, 1.3)
+    assert w.latency == (1.2, 1.3)
+    w.set_latency(None)
+    assert w.latency is None
+
+
+def test_el_orbe_muestra_el_retraso_de_cada_frase(app, settings):
+    from interpreter.pipeline import UtteranceMetrics
+
+    win = _ventana(settings)
+    win.open_orb()
+    m = UtteranceMetrics(stt=0.5, mt=0.3, first_audio_from_speech_end=1.8)
+    win._on_metrics(m)
+    assert win._orb.latency == (1.8, 1.8)
+    win.close()
+
+
+def _ventana_con_sonido(settings, sonidos):
+    return MainWindow(
+        _builder,
+        settings=settings,
+        load_on_start=False,
+        voice_lister=lambda: [],
+        sound_player=sonidos.append,
+    )
+
+
+def test_suena_una_sola_vez_al_terminar_de_cargar_y_no_al_detener(app, settings):
+    sonidos = []
+    win = _ventana_con_sonido(settings, sonidos)
+    win._on_state(EngineState.LOADING, "")
+    assert sonidos == []
+    win._on_state(EngineState.READY, "")
+    assert len(sonidos) == 1 and sonidos[0][:4] == b"RIFF"  # el WAV de «listo»
+    win._on_state(EngineState.RUNNING, "")
+    win._on_state(EngineState.READY, "")  # detener la interpretación NO suena
+    assert len(sonidos) == 1
+    win.close()
+
+
+def test_el_sonido_se_puede_apagar_y_el_ajuste_se_recuerda(app, settings):
+    sonidos = []
+    win = _ventana_con_sonido(settings, sonidos)
+    win.chk_sound.setChecked(False)
+    win._on_state(EngineState.LOADING, "")
+    win._on_state(EngineState.READY, "")
+    assert sonidos == []
+    assert settings.value("sound_on_ready", True, type=bool) is False
+    win.close()
+
+
+def test_un_fallo_del_sonido_no_rompe_la_aplicacion(app, settings):
+    def roto(_data):
+        raise OSError("sin dispositivo de audio")
+
+    win = MainWindow(
+        _builder, settings=settings, load_on_start=False, voice_lister=lambda: [], sound_player=roto
+    )
+    win._on_state(EngineState.LOADING, "")
+    win._on_state(EngineState.READY, "")  # no debe lanzar
+    win.close()
+
+
+def test_el_avance_del_motor_llega_al_orbe(app, settings):
+    win = _ventana(settings)
+    win.open_orb()
+    win._orb.set_mood(Mood.LOADING)
+    win._on_progress(0.6, "Cargando la voz…")
+    assert win._orb.stage_label == "Cargando la voz…"
+    win.close()

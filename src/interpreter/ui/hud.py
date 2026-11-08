@@ -140,6 +140,10 @@ class OrbWindow(QWidget):
             None  # estado del micrófono de Windows (None = no se puede controlar)
         )
         self._vu = 0  # pasos encendidos de la barra de escucha
+        self._prog_target = 0.0  # avance real (0..1) informado por el motor
+        self._prog_shown = 0.0  # avance que se muestra (suavizado)
+        self.stage_label = ""
+        self.latency: tuple[float, float] | None = None  # (último, mediana) en segundos
         self._paint_ms: deque[float] = deque(maxlen=SLOW_PAINT_FRAMES)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -154,6 +158,24 @@ class OrbWindow(QWidget):
     def set_languages(self, source: str, target: str) -> None:
         self.src_name, self.dst_name = source, target
         self.update()
+
+    def set_progress(self, fraction: float, label: str = "") -> None:
+        """Avance de la carga (estimado por etapas): el número nunca baja ni llega a 100 % antes de tiempo."""
+        fraction = max(0.0, min(1.0, fraction))
+        if fraction >= self._prog_target:
+            self._prog_target = fraction
+        if fraction >= 1.0:
+            self._prog_shown = 1.0
+        self.stage_label = label
+        self.update()
+
+    def set_latency(self, last: float | None, median: float | None = None) -> None:
+        self.latency = None if last is None else (last, median if median is not None else last)
+        self.update()
+
+    @property
+    def progress_percent(self) -> int:
+        return int(self._prog_shown * 100)
 
     def set_animation(self, mode: str) -> None:
         """``ligera`` (solo la barra de escucha), ``completa`` o ``ninguna``."""
@@ -214,6 +236,9 @@ class OrbWindow(QWidget):
     def _tick(self) -> None:
         if not self.isVisible():
             return
+        if self.mood is Mood.LOADING:
+            self._tick_loading()
+            return
         if self.animation != FULL:
             self._tick_light()
             return
@@ -233,6 +258,20 @@ class OrbWindow(QWidget):
         self._level *= 0.7
         self._timer.setInterval(33 if active or any(b > 0.03 for b in self._bars) else 120)
         self.update()
+
+    def _tick_loading(self) -> None:
+        """Carga: el número sigue al avance real y «repta» hasta +8 puntos para no parecer detenido."""
+        cap = 1.0 if self._prog_target >= 1.0 else min(0.99, self._prog_target + 0.08)
+        goal = self._prog_target if self._prog_shown >= self._prog_target else self._prog_target
+        if self._prog_shown < goal:
+            self._prog_shown = min(goal, self._prog_shown + max(0.004, (goal - self._prog_shown) * 0.25))
+        elif self._prog_shown < cap:
+            self._prog_shown = min(cap, self._prog_shown + 0.0015)
+        steps = min(VU_STEPS, int(self._prog_shown * VU_STEPS))
+        if steps != self._vu or self.progress_percent != getattr(self, "_last_percent", -1):
+            self._vu = steps
+            self._last_percent = self.progress_percent
+            self.update()
 
     def _tick_light(self) -> None:
         """Animación ligera: solo la barra de escucha; se repinta ÚNICAMENTE si cambia su paso (≤12 fps)."""
@@ -275,9 +314,10 @@ class OrbWindow(QWidget):
             self._draw_thin_rings(q, c, u, accent, dim)
             self._draw_ticks(q, c, u, accent, dim, lit=None)
             self._draw_texts(q, c, u, accent)
+            self._draw_latency(q, c, u)
             self._draw_buttons(q, accent)
 
-        text_key = (self.src_name, self.dst_name, self.muted, self.caption)
+        text_key = (self.src_name, self.dst_name, self.muted, self.caption, self.stage_label, self.latency)
         base = self._layer("static", (*geom, *text_key), static)
         arc = self._layer("arc", geom, lambda q: self._draw_arc(q, c, u, accent, dim))
         orb = self._layer("orb", geom, lambda q: self._draw_orb(q, c, u, accent, dot))
@@ -289,7 +329,9 @@ class OrbWindow(QWidget):
         p.drawPixmap(0, 0, base)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        full = self.animation == FULL
+        full = self.animation == FULL and self.mood is not Mood.LOADING
+        if self.mood is Mood.LOADING and self._vu:
+            self._draw_vu(p, c, u, accent, dim, lit=self._vu)
         p.save()  # el anillo brillante gira (solo en la animación completa): se gira la capa ya dibujada
         p.translate(c)
         p.rotate(-self._phase * 360.0 if full else 0.0)
@@ -312,6 +354,8 @@ class OrbWindow(QWidget):
         p.translate(-c)
         p.drawPixmap(0, 0, orb)
         p.restore()
+        if self.mood is Mood.LOADING:
+            self._draw_percent(p, c, u)
         p.end()
         self._watch_paint_cost((time.perf_counter() - started) * 1000.0)
 
@@ -458,6 +502,8 @@ class OrbWindow(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(inner))
         p.drawEllipse(c, r * 0.55, r * 0.55)
+        if self.mood is Mood.LOADING:
+            return  # el centro lo ocupa el porcentaje
         glow = QColor(dot)
         glow.setAlphaF(0.35)
         p.setBrush(glow)
@@ -474,7 +520,7 @@ class OrbWindow(QWidget):
         return f
 
     def _draw_texts(self, p: QPainter, c: QPointF, u: float, accent: QColor) -> None:
-        title = self._font(u * 0.066, QFont.Weight.Bold)
+        title = self._font(u * (0.05 if self.mood is Mood.LOADING else 0.066), QFont.Weight.Bold)
         p.setFont(title)
         p.setPen(QColor("#ffffff"))
         p.drawText(
@@ -488,7 +534,9 @@ class OrbWindow(QWidget):
         p.drawText(
             QRectF(c.x() - u * 0.5, c.y() - u * 0.365, u * 1.0, u * 0.07),
             Qt.AlignmentFlag.AlignCenter,
-            f"{self.src_name} → {self.dst_name}",
+            self.stage_label
+            if self.mood is Mood.LOADING and self.stage_label
+            else f"{self.src_name} → {self.dst_name}",
         )
         if self.caption:
             cap = self._font(u * 0.058)
@@ -503,6 +551,30 @@ class OrbWindow(QWidget):
                 Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
                 self.caption,
             )
+
+    def _draw_percent(self, p: QPainter, c: QPointF, u: float) -> None:
+        """«NN %» en el centro del ojo mientras cargan los modelos."""
+        p.setFont(self._font(u * 0.085, QFont.Weight.Bold))
+        p.setPen(QColor("#ffffff"))
+        p.drawText(
+            QRectF(c.x() - u * 0.17, c.y() - u * 0.07, u * 0.34, u * 0.14),
+            Qt.AlignmentFlag.AlignCenter,
+            f"{self.progress_percent} %",
+        )
+
+    def _draw_latency(self, p: QPainter, c: QPointF, u: float) -> None:
+        """Retraso de la última frase y mediana, abajo; azul / ámbar / rojo según qué tan lento sea."""
+        if self.latency is None:
+            return
+        last, med = self.latency
+        color = QColor("#7fb0ff") if last <= 1.5 else QColor("#ffc857") if last <= 2.5 else QColor("#ff6b7a")
+        p.setFont(self._font(u * 0.048, QFont.Weight.DemiBold))
+        p.setPen(color)
+        p.drawText(
+            QRectF(c.x() - u * 0.6, c.y() + u * 0.885, u * 1.2, u * 0.09),
+            Qt.AlignmentFlag.AlignCenter,
+            f"Retraso {last:.1f} s · mediana {med:.1f} s".replace(".", ","),
+        )
 
     def _draw_buttons(self, p: QPainter, accent: QColor) -> None:
         rects = self.button_rects()

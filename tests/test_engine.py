@@ -702,3 +702,41 @@ def test_restart_capture_avisa_si_no_se_puede_reabrir_el_microfono():
     eng._capture_factory = lambda *a, **k: Rota(*a, **k)
     assert eng.restart_capture() is False
     assert any("No se pudo reabrir el micrófono" in e for e in errores)
+
+
+# -- spec B: avance de la carga ---------------------------------------------------------------------------
+
+
+def test_la_carga_informa_su_avance_si_la_fabrica_lo_admite():
+    avances = []
+
+    def fabrica(cfg, progress=None):
+        progress(0.30, "Cargando el traductor…")
+        progress(0.60, "Cargando la voz…")
+        return FakeSTT(), FakeMT(), FakeTTS(chunks=1)
+
+    eng = Engine(
+        EngineConfig(),
+        EngineEvents(on_progress=lambda f, label: avances.append((f, label))),
+        fabrica,
+        lambda *a, **k: FakeCapture(*a, **k),
+        lambda *a: FakePlayer(*a),
+    )
+    eng.load()
+    fracciones = [f for f, _ in avances]
+    assert fracciones[0] == 0.0 and fracciones[-1] == 1.0 and avances[-1][1] == "Listo"
+    assert fracciones == sorted(fracciones)  # nunca baja
+    assert (0.30, "Cargando el traductor…") in avances
+
+
+def test_una_fabrica_de_un_solo_parametro_sigue_funcionando_sin_avance_intermedio():
+    avances = []
+    eng = Engine(
+        EngineConfig(),
+        EngineEvents(on_progress=lambda f, label: avances.append(f)),
+        lambda cfg: (FakeSTT(), FakeMT(), FakeTTS(chunks=1)),  # firma antigua: sin «progress»
+        lambda *a, **k: FakeCapture(*a, **k),
+        lambda *a: FakePlayer(*a),
+    )
+    eng.load()
+    assert eng.state is EngineState.READY and avances[0] == 0.0 and avances[-1] == 1.0

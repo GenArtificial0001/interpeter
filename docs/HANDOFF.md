@@ -11,7 +11,7 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.6.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+- **Versiones al cierre:** app **0.7.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
   en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
@@ -317,3 +317,13 @@ de aceptación, archivos a tocar y riesgos. Decisiones abiertas con la persona e
   si la persona apagó el micrófono. Cada cambio queda en el registro: `Micrófono: silenciado=… volumen=… dispositivo=… origen=persona|vigilante`.
 - **No verificado con el micrófono real**: las pruebas usan el falso; la causa de que «se apague solo» sigue sin diagnóstico (ahora el
   registro mostrará cuándo ocurre). Pendiente: spec B (carga con % y sonido) y C (Ajustes rediseñado).
+
+## 21. Spec B implementada (0.7.0) — carga con porcentaje, sonido y retraso en el orbe
+
+- `EngineEvents.on_progress(fracción, etapa)`; `default_backends(cfg, progress=None)` informa 2 % → 30 % → 60 % → 85 % → 100 %
+  (reconocimiento, traductor, voz, calentamiento); `Engine._build_backends` solo pasa `progress` a fábricas que lo admiten.
+- Orbe: en carga el **ojo muestra «NN %»** y el anillo de marcas se llena; el número «repta» hasta +8 puntos sobre la etapa informada
+  y nunca llega a 100 % antes del evento final (el porcentaje es una **estimación por etapas**, pesos sin calibrar con mediciones).
+- `sound.py`: acorde ascendente sintetizado (WAV en memoria, ≈ −12 dBFS) por `winsound` en la salida predeterminada; suena **una vez** al
+  pasar LOADING→READY (no al detener); casilla «Sonido al terminar de cargar» (`sound_on_ready`).
+- Retraso: «Retraso 1,2 s · mediana 1,3 s» abajo del orbe (azul ≤1,5 s, ámbar ≤2,5 s, rojo). No verificado en pantalla real ni el sonido por los auriculares de la persona.
