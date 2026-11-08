@@ -36,6 +36,13 @@ from PySide6.QtWidgets import QMenu, QWidget
 SIZE = 560
 BARS = 96
 TICKS = 90
+VU_STEPS = 24  # pasos de la barra de escucha (animación «ligera»: solo se repinta si cambia el paso)
+
+# Animación: lo que MÁS importa es que el intérprete no pierda rendimiento.
+LIGHT, FULL, NONE = "ligera", "completa", "ninguna"
+ANIMATIONS = {LIGHT: "Ligera (solo la barra de escucha)", FULL: "Completa", NONE: "Sin animación"}
+SLOW_PAINT_MS = 30.0  # si pintar tarda más que esto de media, la animación completa se apaga sola
+SLOW_PAINT_FRAMES = 30
 
 
 class Mood(Enum):
@@ -98,6 +105,7 @@ class OrbWindow(QWidget):
     history_requested = Signal()
     classic_requested = Signal()  # menú: volver a la ventana clásica
     closed = Signal()  # la ventana se cerró (Alt+F4 o menú «Salir»)
+    animation_changed = Signal(str)  # el modo de animación cambió (menú o apagado automático por lentitud)
 
     BUTTONS = ("settings", "history", "mic")  # orden de hit-test
 
@@ -124,9 +132,12 @@ class OrbWindow(QWidget):
         self._bars = [0.0] * BARS
         self._press_pos: QPointF | None = None
         self._cache: dict[str, tuple[tuple, QPixmap]] = {}  # capas ya dibujadas (ver _layer)
+        self.animation = LIGHT  # por defecto la más barata
+        self._vu = 0  # pasos encendidos de la barra de escucha
+        self._paint_ms: deque[float] = deque(maxlen=SLOW_PAINT_FRAMES)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(120)
+        self._timer.start(80)
 
     # -- API que usa MainWindow -----------------------------------------------------------------------------
 
@@ -136,6 +147,16 @@ class OrbWindow(QWidget):
 
     def set_languages(self, source: str, target: str) -> None:
         self.src_name, self.dst_name = source, target
+        self.update()
+
+    def set_animation(self, mode: str) -> None:
+        """``ligera`` (solo la barra de escucha), ``completa`` o ``ninguna``."""
+        if mode not in ANIMATIONS or mode == self.animation:
+            return
+        self.animation = mode
+        self._paint_ms.clear()
+        self._timer.setInterval(80)
+        self.animation_changed.emit(mode)
         self.update()
 
     def push_level(self, rms: float) -> None:
@@ -187,6 +208,9 @@ class OrbWindow(QWidget):
     def _tick(self) -> None:
         if not self.isVisible():
             return
+        if self.animation != FULL:
+            self._tick_light()
+            return
         now = self._now()
         dt = max(0.0, min(0.5, now - self._last_tick))
         self._last_tick = now
@@ -203,6 +227,17 @@ class OrbWindow(QWidget):
         self._level *= 0.7
         self._timer.setInterval(33 if active or any(b > 0.03 for b in self._bars) else 120)
         self.update()
+
+    def _tick_light(self) -> None:
+        """Animación ligera: solo la barra de escucha; se repinta ÚNICAMENTE si cambia su paso (≤12 fps)."""
+        self._last_tick = self._now()
+        steps = 0
+        if self.animation == LIGHT and self.mood is Mood.RUNNING and not self.muted:
+            steps = min(VU_STEPS, int(self._level * VU_STEPS + 0.5))
+        self._level *= 0.6
+        if steps != self._vu:
+            self._vu = steps
+            self.update()
 
     # -- dibujo ----------------------------------------------------------------
 
@@ -223,6 +258,7 @@ class OrbWindow(QWidget):
         return pm
 
     def paintEvent(self, _event) -> None:  # noqa: ANN001, N802
+        started = time.perf_counter()
         dot, accent = PALETTE[self.mood]
         c, u = self._center(), self._unit()
         dim = 1.0 if self.mood in (Mood.RUNNING, Mood.LOADING) else 0.7
@@ -247,17 +283,23 @@ class OrbWindow(QWidget):
         p.drawPixmap(0, 0, base)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        p.save()  # el anillo brillante gira: se gira la capa ya dibujada
+        full = self.animation == FULL
+        p.save()  # el anillo brillante gira (solo en la animación completa): se gira la capa ya dibujada
         p.translate(c)
-        p.rotate(-self._phase * 360.0)
+        p.rotate(-self._phase * 360.0 if full else 0.0)
         p.translate(-c)
         p.drawPixmap(0, 0, arc)
         p.restore()
-        self._draw_ticks(p, c, u, accent, dim, lit=int(self._phase * TICKS))
-        self._draw_bars(p, c, u, accent, dim)
-        pulse = 1.0 + (0.04 * math.sin(self._phase * 2 * math.pi) if self.mood is Mood.RUNNING else 0.0)
-        if self._now() < self._speak_until:
-            pulse += 0.05
+        if full:
+            self._draw_ticks(p, c, u, accent, dim, lit=int(self._phase * TICKS))
+            self._draw_bars(p, c, u, accent, dim)
+        elif self._vu:
+            self._draw_vu(p, c, u, accent, dim, lit=self._vu)
+        pulse = 1.0
+        if full:
+            pulse += 0.04 * math.sin(self._phase * 2 * math.pi) if self.mood is Mood.RUNNING else 0.0
+            if self._now() < self._speak_until:
+                pulse += 0.05
         p.save()  # el orbe «respira»: se escala la capa ya dibujada alrededor del centro
         p.translate(c)
         p.scale(pulse, pulse)
@@ -265,6 +307,40 @@ class OrbWindow(QWidget):
         p.drawPixmap(0, 0, orb)
         p.restore()
         p.end()
+        self._watch_paint_cost((time.perf_counter() - started) * 1000.0)
+
+    def _watch_paint_cost(self, ms: float) -> None:
+        """Si pintar es lento (CPU saturada), la animación completa se apaga sola: el intérprete manda."""
+        if self.animation != FULL:
+            return
+        self._paint_ms.append(ms)
+        if (
+            len(self._paint_ms) == SLOW_PAINT_FRAMES
+            and sum(self._paint_ms) / SLOW_PAINT_FRAMES > SLOW_PAINT_MS
+        ):
+            self.set_animation(LIGHT)
+
+    def _draw_vu(self, p: QPainter, c: QPointF, u: float, accent: QColor, dim: float, lit: int) -> None:
+        """Barra de escucha CIRCULAR alrededor del ojo: las marcas se encienden desde arriba a los lados."""
+        r_in, r_out = u * 0.255, u * 0.285
+        per_side = lit / VU_STEPS * (TICKS / 2)  # marcas encendidas a cada lado del punto más alto
+        lines: list[QLineF] = []
+        for i in range(TICKS):
+            if min(i, TICKS - i) >= per_side:
+                continue
+            ang = 2 * math.pi * i / TICKS - math.pi / 2
+            lines.append(
+                QLineF(
+                    c.x() + r_in * math.cos(ang),
+                    c.y() + r_in * math.sin(ang),
+                    c.x() + r_out * math.cos(ang),
+                    c.y() + r_out * math.sin(ang),
+                )
+            )
+        col = QColor("#ffffff")
+        col.setAlphaF(0.95 * dim)
+        p.setPen(QPen(col, max(2.0, u * 0.014), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLines(lines)
 
     def _draw_glow(self, p: QPainter, c: QPointF, u: float, accent: QColor, dim: float) -> None:
         g = QRadialGradient(c, u * 0.95)
@@ -504,6 +580,12 @@ class OrbWindow(QWidget):
         top.setChecked(bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
         top.toggled.connect(self.set_always_on_top)
         menu.addAction(top)
+        anim = menu.addMenu("Animación")
+        for mode, label in ANIMATIONS.items():
+            act = QAction(label, anim, checkable=True)
+            act.setChecked(mode == self.animation)
+            act.triggered.connect(lambda _=False, m=mode: self.set_animation(m))
+            anim.addAction(act)
         classic = menu.addAction("Volver a la ventana clásica")
         classic.triggered.connect(self.classic_requested.emit)
         menu.addSeparator()

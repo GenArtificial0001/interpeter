@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
+import threading
 from pathlib import Path
 from types import TracebackType
 
@@ -41,6 +43,21 @@ def setup_logging(home: Path) -> Path:
     return logfile
 
 
+def shutdown(engine: object, code: int = 0, grace_s: float = 5.0) -> None:
+    """Cierra TODO al salir: el motor, el servidor del micrófono virtual (puerto 8765) y los auxiliares.
+
+    El botón de cerrar debe terminar la aplicación completa y no dejar puertos abiertos. Si algo se queda
+    colgado, un temporizador (que no impide salir) fuerza el fin del proceso pasados ``grace_s`` segundos.
+    """
+    watchdog = threading.Timer(grace_s, os._exit, args=(code,))
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        engine.close()  # type: ignore[attr-defined]  # idempotente: ya lo hizo closeEvent
+    except Exception:  # noqa: BLE001 - al salir no hay nada más que hacer que registrarlo
+        logging.getLogger("interpreter").exception("Error al cerrar el motor")
+
+
 def main() -> int:
     from .stages.backends import app_home, use_local_model_cache
 
@@ -64,7 +81,9 @@ def main() -> int:
     app.setApplicationName("Interpreter")
     win = MainWindow()
     win.show()
-    return app.exec()
+    code = app.exec()
+    shutdown(win.engine, code)
+    return code
 
 
 if __name__ == "__main__":

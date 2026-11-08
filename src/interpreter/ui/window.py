@@ -1058,6 +1058,10 @@ class MainWindow(QMainWindow):
             orb.history_requested.connect(self._show_history)
             orb.classic_requested.connect(self.close_orb)
             orb.closed.connect(self._orb_closed)
+            saved = str(self._settings.value("orb_animation", "", type=str))
+            if saved:
+                orb.set_animation(saved)
+            orb.animation_changed.connect(lambda mode: self._settings.setValue("orb_animation", mode))
             self._orb = orb
         self._sync_orb()
         self._orb.show()

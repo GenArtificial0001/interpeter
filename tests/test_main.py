@@ -49,3 +49,41 @@ def test_excepcion_no_controlada_queda_en_el_log(monkeypatch, tmp_path):
             root.removeHandler(h)
         for h in saved:
             root.addHandler(h)
+
+
+def test_shutdown_cierra_el_motor_y_no_deja_un_temporizador_que_mate_un_cierre_sano(monkeypatch):
+    llamadas = []
+    temporizadores = []
+
+    class Motor:
+        def close(self):
+            llamadas.append("cerrado")
+
+    class FakeTimer:
+        def __init__(self, seg, fn, args=()):
+            self.seg, self.fn, self.args, self.daemon, self.iniciado = seg, fn, args, False, False
+            temporizadores.append(self)
+
+        def start(self):
+            self.iniciado = True
+
+    monkeypatch.setattr(entry.threading, "Timer", FakeTimer)
+    entry.shutdown(Motor(), 0, grace_s=3.0)
+    assert llamadas == ["cerrado"]
+    t = temporizadores[0]
+    assert t.iniciado and t.daemon and t.seg == 3.0 and t.fn is entry.os._exit  # seguro por si algo se cuelga
+
+
+def test_shutdown_sigue_aunque_el_motor_falle(monkeypatch):
+    class Motor:
+        def close(self):
+            raise RuntimeError("fallo al cerrar")
+
+    class FakeTimer:
+        def __init__(self, *a, **k):
+            self.daemon = False
+
+        def start(self): ...
+
+    monkeypatch.setattr(entry.threading, "Timer", FakeTimer)
+    entry.shutdown(Motor())  # no debe lanzar

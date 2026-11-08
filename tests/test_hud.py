@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from interpreter.engine import Engine, EngineState  # noqa: E402
 from interpreter.stages.fakes import FakeMT, FakeSTT, FakeTTS  # noqa: E402
-from interpreter.ui.hud import BARS, Mood, OrbWindow  # noqa: E402
+from interpreter.ui.hud import BARS, FULL, LIGHT, NONE, VU_STEPS, Mood, OrbWindow  # noqa: E402
 from interpreter.ui.window import MainWindow  # noqa: E402
 
 
@@ -75,6 +75,7 @@ def test_los_clics_emiten_las_senales(app):
 def test_la_voz_mueve_las_barras_y_en_reposo_se_apagan(app):
     t = [0.0]
     w = OrbWindow(400, now=lambda: t[0])
+    w.set_animation(FULL)
     w.show()
     w.set_mood(Mood.RUNNING)
     for _ in range(20):
@@ -88,6 +89,120 @@ def test_la_voz_mueve_las_barras_y_en_reposo_se_apagan(app):
     assert max(w._bars) < 0.03  # sin voz vuelven a cero (y la animación baja de ritmo)
     assert w._timer.interval() == 120
     w.close()
+
+
+# -- animación: el rendimiento del intérprete manda ---------------------------------------------------------
+
+
+def test_por_defecto_la_animacion_es_la_ligera(app):
+    w = OrbWindow(400)
+    assert w.animation == LIGHT
+
+
+def test_en_modo_ligero_solo_se_anima_la_barra_circular_de_escucha(app):
+    w = OrbWindow(400)
+    w.show()
+    w.set_mood(Mood.RUNNING)
+    fase = w._phase
+    for _ in range(10):
+        w.push_level(0.12)
+        w._tick()
+    assert w._vu > 0  # la barra de escucha reacciona al micrófono
+    assert max(w._bars) == 0 and w._phase == fase  # nada más se anima: ni barras ni giros
+    assert w._timer.interval() == 80  # ~12 fps como máximo
+    w.close()
+
+
+def test_la_barra_de_escucha_es_un_anillo_alrededor_del_ojo_que_se_enciende_de_arriba_abajo(app):
+    from PySide6.QtGui import QPainter
+
+    w = OrbWindow(500)
+    u, c = w._unit(), w._center()
+    img = QImage(w.size(), QImage.Format.Format_ARGB32_Premultiplied)
+
+    def lit_pixels(lit: int) -> list[tuple[int, int]]:
+        img.fill(0)
+        p = QPainter(img)
+        w._draw_vu(p, c, u, w_accent, 1.0, lit)
+        p.end()
+        return [
+            (x, y)
+            for y in range(0, img.height(), 2)
+            for x in range(0, img.width(), 2)
+            if img.pixelColor(x, y).alpha() > 0
+        ]
+
+    from interpreter.ui.hud import PALETTE
+
+    w_accent = PALETTE[Mood.RUNNING][1]
+    poco, mucho = lit_pixels(4), lit_pixels(VU_STEPS)
+    assert 0 < len(poco) < len(mucho)
+    for x, y in mucho:  # todo cae en el anillo que rodea al orbe (entre 0,24 y 0,30 del radio)
+        d = ((x - c.x()) ** 2 + (y - c.y()) ** 2) ** 0.5
+        assert u * 0.24 <= d <= u * 0.30
+    assert all(y < c.y() + 3 for _, y in poco)  # con poco volumen solo se enciende la parte alta
+
+
+def test_sin_voz_o_silenciado_la_barra_no_se_enciende(app):
+    w = OrbWindow(400)
+    w.show()
+    w.set_mood(Mood.RUNNING)
+    w.muted = True
+    for _ in range(10):
+        w.push_level(0.2)
+        w._tick()
+    assert w._vu == 0
+    w.close()
+
+
+def test_en_modo_ligero_solo_se_repinta_si_cambia_el_paso_de_la_barra(app):
+    w = OrbWindow(400)
+    w.show()
+    w.set_mood(Mood.RUNNING)
+    pintados = []
+    original = w.update
+    w.update = lambda *a: (pintados.append(1), original(*a))[1]
+    w._level = 0.0
+    for _ in range(30):  # en silencio y sin cambios: ningún repintado
+        w._tick()
+    assert pintados == []
+    w.push_level(0.2)
+    w._tick()
+    assert len(pintados) == 1
+    w.close()
+
+
+def test_sin_animacion_no_se_mueve_nada(app):
+    w = OrbWindow(400)
+    w.show()
+    w.set_animation(NONE)
+    w.set_mood(Mood.RUNNING)
+    for _ in range(10):
+        w.push_level(0.3)
+        w._tick()
+    assert w._vu == 0 and max(w._bars) == 0
+    w.close()
+
+
+def test_la_animacion_completa_se_apaga_sola_si_pintar_es_lento(app):
+    w = OrbWindow(400)
+    w.set_animation(FULL)
+    cambios = []
+    w.animation_changed.connect(cambios.append)
+    for _ in range(40):
+        w._watch_paint_cost(80.0)  # cada cuadro tarda 80 ms: la CPU está saturada
+    assert w.animation == LIGHT and cambios[-1] == LIGHT
+    w.set_animation(FULL)
+    for _ in range(40):
+        w._watch_paint_cost(4.0)
+    assert w.animation == FULL  # si pinta rápido se queda
+    w.close()
+
+
+def test_el_menu_del_orbe_ofrece_los_tres_modos(app):
+    from interpreter.ui.hud import ANIMATIONS
+
+    assert set(ANIMATIONS) == {LIGHT, FULL, NONE}
 
 
 def test_en_pausa_la_animacion_no_gasta_cpu(app):
@@ -213,3 +328,80 @@ def test_si_la_ultima_vez_se_uso_el_orbe_se_abre_solo(app, settings):
         time.sleep(0.01)
     assert win._orb is not None and win._orb.isVisible()
     win.close()
+
+
+def test_el_modo_de_animacion_se_recuerda(app, settings):
+    win = _ventana(settings)
+    win.open_orb()
+    assert win._orb.animation == LIGHT
+    win._orb.set_animation(FULL)
+    assert settings.value("orb_animation", "", type=str) == FULL
+    win.close()
+    win2 = _ventana(settings)
+    win2.open_orb()
+    assert win2._orb.animation == FULL
+    win2.close()
+
+
+def test_cerrar_la_aplicacion_libera_el_puerto_del_servidor(app, settings):
+    """El botón de cerrar debe terminar TODO: el servidor del micrófono virtual no puede quedar escuchando."""
+    import socket
+    import time
+
+    from interpreter.audio.webmic import WebMicServer
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    def build(config, events):
+        return Engine(
+            config,
+            events,
+            lambda c: (FakeSTT(), FakeMT(), FakeTTS(chunks=1)),
+            _Cap,
+            _Ply,
+            webmic_factory=lambda cb: WebMicServer(port=port, on_clients_changed=cb, dev=True),
+        )
+
+    win = MainWindow(build, settings=settings, load_on_start=False, voice_lister=lambda: [])
+    server = win.engine.ensure_webmic()
+    assert server.running
+    with socket.socket() as c:
+        c.settimeout(1)
+        assert c.connect_ex(("127.0.0.1", port)) == 0  # el puerto está abierto
+    win.close()
+    time.sleep(0.3)
+    with socket.socket() as c:
+        c.settimeout(1)
+        assert c.connect_ex(("127.0.0.1", port)) != 0  # cerrada la ventana, nadie escucha ya
+
+
+def test_cerrar_el_orbe_con_la_clasica_oculta_tambien_libera_el_puerto(app, settings):
+    import socket
+    import time
+
+    from interpreter.audio.webmic import WebMicServer
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    def build(config, events):
+        return Engine(
+            config,
+            events,
+            lambda c: (FakeSTT(), FakeMT(), FakeTTS(chunks=1)),
+            _Cap,
+            _Ply,
+            webmic_factory=lambda cb: WebMicServer(port=port, on_clients_changed=cb, dev=True),
+        )
+
+    win = MainWindow(build, settings=settings, load_on_start=False, voice_lister=lambda: [])
+    win.engine.ensure_webmic()
+    win.open_orb()
+    win._orb.close()  # «Salir de Interpreter» en el orbe
+    time.sleep(0.3)
+    with socket.socket() as c:
+        c.settimeout(1)
+        assert c.connect_ex(("127.0.0.1", port)) != 0
