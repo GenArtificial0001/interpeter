@@ -223,3 +223,15 @@ precisión; (6) registrar `MicCapture.overruns` y subárranques del `Player` en 
    medir (`scripts/verify_extension.py` escenario 6/7 bajo carga).
 4. Trabajar la latencia (ideas del §9) con mediciones antes/después en el mismo equipo.
 5. Mantener la lista de cambios de versión de `AGENTS.md` y avisar siempre al usuario cómo probar.
+
+## 15. Integración futura con Visión (documentada, sin código)
+
+La persona quiere que Visión (`C:\Proyectos\VISION-Ford\dev\Vision`) tenga una sección **«Widgets»** de atajos propios por
+persona que lance aplicaciones como Interpreter (no integrarlo como código: pesa y tiene licencias propias). Está
+especificado allí, solo como archivos nuevos (sin commit):
+`specs/widgets-atajos/spec.md`, `specs/buscador-archivos/spec.md` y `docs/plans/2026-11-08-widgets-y-buscador-notas-de-diseno.md`
+(con mediciones reales y el contrato `widget.json`).
+
+**Pendiente en ESTE proyecto para ser un buen widget (no hecho):** candado de una sola instancia (hoy dos instancias compiten
+por el micrófono y el puerto 8765), `--version` y un `widget.json` en la raíz (ejemplo en el Anexo A de esa spec). Debe seguir
+lanzándose con `Iniciar Interpreter.bat`; no cambia nada de lo que usa la persona hoy.
