@@ -58,7 +58,7 @@ por el prototipo, ni por la API antigua). Se ejecuta con:
 .venv-clone\\Scripts\\python.exe scripts\\verify_extension.py --browser chrome
 ```
 
-**Confirmado en reuniones reales:** Teams web y Google Meet. **Todavía no verificado:** Zoom web y la
+**Confirmado en reuniones reales:** Teams web, Google Meet y Zoom web. **Todavía no verificado:** la
 reconexión tras suspender el service worker durante horas.
 
 ## Identificador fijo
@@ -76,7 +76,7 @@ conexiones de ese ID: otra extensión, o cualquier página web, es rechazada. Si
 |---|---|
 | Teams en el navegador (Edge, Chrome) | Funciona: confirmado en una reunión real (aparece el micrófono y el medidor reacciona) |
 | Google Meet en el navegador | Funciona: confirmado en una reunión real (Meet reconoce «Interpreter (voz traducida)» como micrófono) |
-| Zoom en el navegador (`app.zoom.us/wc/…`) | Declarado para `*.zoom.us`; **sin probar en una reunión real** |
+| Zoom en el navegador (`app.zoom.us/wc/…`) | Funciona: confirmado en una reunión real (extensión 0.3.2) |
 | **Teams o Zoom de escritorio** | **No**: no son páginas web. Para eso hace falta el cable o VB-Cable |
 
 ## Versión
