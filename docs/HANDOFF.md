@@ -11,7 +11,7 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.4.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+- **Versiones al cierre:** app **0.5.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
   en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
@@ -31,6 +31,14 @@ verificado o como hipótesis.
 > anillos, barras, orbe con punto de estado, Ajustes/Historial/Micrófono). Opcional: botón «Modo orbe» en la ventana
 > clásica; clic derecho en el orbe → «Volver a la ventana clásica». Dibujado con `QPainter` (sin imágenes ni desenfoques,
 > por la CPU). Primer prototipo: el diseño completo (partículas, destellos, escritura árabe) NO está; ver §16.
+
+> 0.4.1–0.5.0: el orbe arranca en animación **«ligera»** (solo una barra de escucha **circular alrededor del ojo**,
+> ~0,4 % de un núcleo; «completa» y «sin animación» en el menú, y la completa se apaga sola si pintar tarda >30 ms).
+> **Micrófono de Windows** (`audio/sysmic.py`, Core Audio por `ctypes`, mismo enfoque que Visión): casilla «Micrófono de
+> Windows activado» + control de volumen en la ventana; en el orbe, la rueda sobre «Micrófono» cambia el volumen (±5) y el
+> menú activa/silencia. Cerrar la aplicación detiene el servidor del micrófono virtual (puerto 8765) y, si algo se cuelga,
+> fuerza el fin del proceso a los 5 s (`__main__.shutdown`). Las pruebas usan un micrófono FALSO (`tests/conftest.py`):
+> **nunca** se probó escribir en el micrófono real; la lectura real sí (laptop: «Microphone Array», 94 %).
 
 ## 2. Línea de tiempo (commits relevantes en `dev`)
 

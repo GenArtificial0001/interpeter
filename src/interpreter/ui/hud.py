@@ -105,6 +105,8 @@ class OrbWindow(QWidget):
     history_requested = Signal()
     classic_requested = Signal()  # menú: volver a la ventana clásica
     closed = Signal()  # la ventana se cerró (Alt+F4 o menú «Salir»)
+    volume_step = Signal(int)  # rueda sobre «Micrófono»: +5 / -5 (volumen de Windows)
+    sys_mic_toggle_requested = Signal()  # menú: activar o silenciar el micrófono de Windows
     animation_changed = Signal(str)  # el modo de animación cambió (menú o apagado automático por lentitud)
 
     BUTTONS = ("settings", "history", "mic")  # orden de hit-test
@@ -133,6 +135,9 @@ class OrbWindow(QWidget):
         self._press_pos: QPointF | None = None
         self._cache: dict[str, tuple[tuple, QPixmap]] = {}  # capas ya dibujadas (ver _layer)
         self.animation = LIGHT  # por defecto la más barata
+        self.sys_mic_muted: bool | None = (
+            None  # estado del micrófono de Windows (None = no se puede controlar)
+        )
         self._vu = 0  # pasos encendidos de la barra de escucha
         self._paint_ms: deque[float] = deque(maxlen=SLOW_PAINT_FRAMES)
         self._timer = QTimer(self)
@@ -460,19 +465,19 @@ class OrbWindow(QWidget):
         p.drawEllipse(c, r * 0.07, r * 0.07)
 
     def _draw_texts(self, p: QPainter, c: QPointF, u: float, accent: QColor) -> None:
-        title = QFont("Segoe UI", max(9, int(u * 0.058)), QFont.Weight.Bold)
+        title = QFont("Segoe UI", max(9, int(u * 0.052)), QFont.Weight.Bold)
         p.setFont(title)
         p.setPen(QColor("#ffffff"))
         p.drawText(
-            QRectF(c.x() - u * 0.5, c.y() - u * 0.47, u * 1.0, u * 0.10),
+            QRectF(c.x() - u * 0.5, c.y() - u * 0.455, u * 1.0, u * 0.09),
             Qt.AlignmentFlag.AlignCenter,
             TITLES[self.mood],
         )
-        sub = QFont("Segoe UI", max(8, int(u * 0.05)), QFont.Weight.DemiBold)
+        sub = QFont("Segoe UI", max(8, int(u * 0.046)), QFont.Weight.DemiBold)
         p.setFont(sub)
         p.setPen(QColor(accent).lighter(135))
         p.drawText(
-            QRectF(c.x() - u * 0.5, c.y() - u * 0.40, u * 1.0, u * 0.09),
+            QRectF(c.x() - u * 0.5, c.y() - u * 0.385, u * 1.0, u * 0.08),
             Qt.AlignmentFlag.AlignCenter,
             f"{self.src_name} → {self.dst_name}",
         )
@@ -586,6 +591,9 @@ class OrbWindow(QWidget):
             act.setChecked(mode == self.animation)
             act.triggered.connect(lambda _=False, m=mode: self.set_animation(m))
             anim.addAction(act)
+        if self.sys_mic_muted is not None:
+            label = "Activar micrófono de Windows" if self.sys_mic_muted else "Silenciar micrófono de Windows"
+            menu.addAction(label).triggered.connect(self.sys_mic_toggle_requested.emit)
         classic = menu.addAction("Volver a la ventana clásica")
         classic.triggered.connect(self.classic_requested.emit)
         menu.addSeparator()
@@ -604,7 +612,11 @@ class OrbWindow(QWidget):
             self.show()  # cambiar las banderas oculta la ventana
 
     def wheelEvent(self, event) -> None:  # noqa: ANN001, N802
-        """Rueda del ratón: cambia el tamaño del orbe (cuadrado, entre 320 y 900 px)."""
-        step = 24 if event.angleDelta().y() > 0 else -24
+        """Rueda: sobre «Micrófono» cambia su volumen (±5); en otra zona, el tamaño del orbe."""
+        up = event.angleDelta().y() > 0
+        if self.hit_test(event.position()) == "mic":
+            self.volume_step.emit(5 if up else -5)
+            return
+        step = 24 if up else -24
         side = max(320, min(900, self.width() + step))
         self.resize(side, side)

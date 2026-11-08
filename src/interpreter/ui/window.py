@@ -12,6 +12,7 @@ import threading
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -28,11 +29,13 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import __version__
+from ..audio import sysmic
 from ..audio.calibrate import LoopbackReport, make_tone, run_loopback_test
 from ..audio.devices import AudioDevice, device_signature, scan_devices
 from ..audio.voice_sample import record
@@ -192,8 +195,12 @@ class MainWindow(QMainWindow):
         license_prompt: Callable[..., bool] = _ask_license,
         glossary_path: Path | None = None,
         voice_lister: Callable[[], list[SapiVoice]] = installed_sapi_voices,
+        mic_control: Any = sysmic,
     ) -> None:
         super().__init__()
+        self._mic_control = mic_control  # lista, activa/silencia y sube/baja el micrófono de Windows
+        self._sys_mic: sysmic.Microphone | None = None
+        self._orb: OrbWindow | None = None
         self._sapi_voices: list[SapiVoice] = []
         self._active_voice = "auto"
         self._glossary_path = glossary_path or app_home() / "glossary.json"
@@ -238,6 +245,7 @@ class MainWindow(QMainWindow):
         self._load_devices()
         self._restore_settings()
         self._fill_voices()
+        self._refresh_mic()
         # Las voces de Windows se consultan en segundo plano (~1 s) para no demorar la ventana.
         threading.Thread(
             target=self._load_sapi_voices, args=(voice_lister,), name="voces-windows", daemon=True
@@ -251,7 +259,6 @@ class MainWindow(QMainWindow):
         self._device_timer.timeout.connect(self._poll_devices)
         self._device_timer.start(DEVICE_POLL_MS)
 
-        self._orb: OrbWindow | None = None
         self._closing = False
         self._last_original = ""
         self._on_state(EngineState.IDLE, "")
@@ -336,6 +343,30 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.cmb_input, 1, 0)
         grid.addWidget(self.cmb_output, 1, 1)
         audio_lay.addLayout(grid)
+        # Micrófono de Windows: activar y volumen (como la configuración de audio de Visión).
+        self.mic_row = QWidget()
+        mic_lay = QHBoxLayout(self.mic_row)
+        mic_lay.setContentsMargins(0, 0, 0, 0)
+        self.chk_mic_on = QCheckBox("Micrófono de Windows activado")
+        self.chk_mic_on.setToolTip(
+            "Activa o silencia este micrófono en Windows (igual que Panel de control > Sonido)."
+        )
+        self.sld_mic = QSlider(Qt.Orientation.Horizontal)
+        self.sld_mic.setRange(0, 100)
+        self.sld_mic.setToolTip("Volumen del micrófono en Windows (0 lo silencia).")
+        self.lbl_mic_vol = QLabel("")
+        self.lbl_mic_vol.setObjectName("muted")
+        self.lbl_mic_vol.setMinimumWidth(44)
+        mic_lay.addWidget(self.chk_mic_on)
+        mic_lay.addWidget(self.sld_mic, 1)
+        mic_lay.addWidget(self.lbl_mic_vol)
+        self.mic_row.hide()  # solo se ve si Windows deja controlar este micrófono
+        audio_lay.addWidget(self.mic_row)
+        self._mic_timer = QTimer(self)  # el volumen se aplica 200 ms después de soltar/mover el control
+        self._mic_timer.setSingleShot(True)
+        self._mic_timer.timeout.connect(self._apply_mic_volume)
+        self.chk_mic_on.toggled.connect(self._on_mic_toggled)
+        self.sld_mic.valueChanged.connect(self._on_mic_slider)
         self.lbl_browser = QLabel()
         self.lbl_browser.setWordWrap(True)
         self.lbl_browser.hide()
@@ -346,6 +377,7 @@ class MainWindow(QMainWindow):
         self.lbl_warning.hide()
         audio_lay.addWidget(self.lbl_warning)
         self.cmb_input.currentIndexChanged.connect(self._check_devices)
+        self.cmb_input.currentIndexChanged.connect(lambda *_: self._refresh_mic())
         self.cmb_output.currentIndexChanged.connect(self._on_output_changed)
         self.level_bar = QProgressBar()
         self.level_bar.setRange(0, 100)
@@ -788,6 +820,78 @@ class MainWindow(QMainWindow):
         if self.engine.state in (EngineState.READY, EngineState.ERROR, EngineState.IDLE):
             self.reload_models()
 
+    # -- micrófono de Windows: activar y volumen ------------------------------------------------
+
+    def _refresh_mic(self) -> None:
+        """Lee el micrófono de Windows que corresponde al dispositivo elegido y muestra su estado real."""
+        try:
+            mics = self._mic_control.list_microphones()
+            mic = self._mic_control.match_device(self.cmb_input.currentText(), mics)
+        except Exception:  # noqa: BLE001 - sin Core Audio no hay controles, y la aplicación sigue igual
+            log.debug("No se pudo leer el micrófono de Windows", exc_info=True)
+            mic = None
+        self._sys_mic = mic
+        known = mic is not None and mic.muted is not None and mic.volume is not None
+        self.mic_row.setVisible(bool(known))
+        if known:
+            assert mic is not None and mic.volume is not None
+            for w in (self.chk_mic_on, self.sld_mic):
+                w.blockSignals(True)
+            self.chk_mic_on.setChecked(not mic.muted)
+            self.sld_mic.setValue(mic.volume)
+            for w in (self.chk_mic_on, self.sld_mic):
+                w.blockSignals(False)
+            self.lbl_mic_vol.setText(f"{mic.volume} %")
+        if self._orb is not None:
+            self._orb.sys_mic_muted = mic.muted if known and mic is not None else None
+
+    def _on_mic_toggled(self, on: bool) -> None:
+        if self._sys_mic is None:
+            return
+        try:
+            self._sys_mic = self._mic_control.set_mute(self._sys_mic.id, not on)
+        except Exception as exc:  # noqa: BLE001
+            self._show_warning(str(exc))
+        self._refresh_mic()
+
+    def _on_mic_slider(self, value: int) -> None:
+        self.lbl_mic_vol.setText(f"{value} %")
+        self._mic_timer.start(200)
+
+    def _apply_mic_volume(self) -> None:
+        if self._sys_mic is None:
+            return
+        try:
+            self._sys_mic = self._mic_control.set_volume(self._sys_mic.id, self.sld_mic.value())
+        except Exception as exc:  # noqa: BLE001
+            self._show_warning(str(exc))
+        self._refresh_mic()
+
+    def _orb_volume_step(self, delta: int) -> None:
+        """Rueda del ratón sobre «Micrófono» en el orbe: sube o baja el volumen de Windows de 5 en 5."""
+        self._refresh_mic()
+        if self._sys_mic is None or self._sys_mic.volume is None:
+            if self._orb is not None:
+                self._orb.set_caption("No se puede controlar el volumen de este micrófono")
+            return
+        try:
+            self._sys_mic = self._mic_control.set_volume(self._sys_mic.id, self._sys_mic.volume + delta)
+        except Exception as exc:  # noqa: BLE001
+            if self._orb is not None:
+                self._orb.set_caption(str(exc))
+            return
+        self._refresh_mic()
+        if self._orb is not None and self._sys_mic is not None:
+            vol = self._sys_mic.volume if not self._sys_mic.muted else 0
+            self._orb.set_caption(f"Volumen del micrófono: {vol} %")
+
+    def _orb_toggle_sys_mic(self) -> None:
+        self._refresh_mic()
+        if self._sys_mic is not None and self._sys_mic.muted is not None:
+            self.chk_mic_on.setChecked(
+                bool(self._sys_mic.muted)
+            )  # si estaba silenciado, se activa (y al revés)
+
     # -- voz genérica: hombre o mujer ---------------------------------------------------------------------
 
     def _load_sapi_voices(self, lister: Callable[[], list[SapiVoice]]) -> None:
@@ -1058,12 +1162,15 @@ class MainWindow(QMainWindow):
             orb.history_requested.connect(self._show_history)
             orb.classic_requested.connect(self.close_orb)
             orb.closed.connect(self._orb_closed)
+            orb.volume_step.connect(self._orb_volume_step)
+            orb.sys_mic_toggle_requested.connect(self._orb_toggle_sys_mic)
             saved = str(self._settings.value("orb_animation", "", type=str))
             if saved:
                 orb.set_animation(saved)
             orb.animation_changed.connect(lambda mode: self._settings.setValue("orb_animation", mode))
             self._orb = orb
         self._sync_orb()
+        self._refresh_mic()
         self._orb.show()
         self._orb.raise_()
         self.hide()

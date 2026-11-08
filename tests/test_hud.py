@@ -405,3 +405,99 @@ def test_cerrar_el_orbe_con_la_clasica_oculta_tambien_libera_el_puerto(app, sett
     with socket.socket() as c:
         c.settimeout(1)
         assert c.connect_ex(("127.0.0.1", port)) != 0
+
+
+# -- micrófono de Windows: activar y volumen -----------------------------------------------------------------
+
+
+def test_el_microfono_de_windows_se_muestra_y_se_controla_desde_la_ventana(app, settings, mic_falso):
+    win = _ventana(settings)
+    assert not win.mic_row.isHidden()  # el micrófono falso es controlable
+    assert win.chk_mic_on.isChecked() and win.sld_mic.value() == 80 and win.lbl_mic_vol.text() == "80 %"
+    win.chk_mic_on.setChecked(False)  # «silenciar»
+    assert mic_falso.muted and mic_falso.volume == 80
+    win.chk_mic_on.setChecked(True)
+    assert not mic_falso.muted
+    win.sld_mic.setValue(35)
+    assert win.lbl_mic_vol.text() == "35 %"
+    win._mic_timer.stop()
+    win._apply_mic_volume()  # lo que dispara el temporizador tras 200 ms
+    assert mic_falso.volume == 35 and ("volume", 35) in mic_falso.writes
+    win.close()
+
+
+def test_el_volumen_se_aplica_una_vez_aunque_se_mueva_el_control_muchas_veces(app, settings, mic_falso):
+    win = _ventana(settings)
+    mic_falso.writes.clear()
+    for v in range(10, 60, 5):
+        win.sld_mic.setValue(v)
+    assert mic_falso.writes == []  # mientras se arrastra no se escribe nada
+    win._mic_timer.stop()
+    win._apply_mic_volume()
+    assert mic_falso.writes.count(("volume", 55)) == 1
+    win.close()
+
+
+def test_si_el_microfono_no_se_puede_controlar_la_fila_no_aparece(app, settings, mic_falso):
+    mic_falso.controllable = False
+    win = _ventana(settings)
+    assert win.mic_row.isHidden()
+    win.close()
+
+
+def test_un_fallo_de_windows_se_avisa_y_la_ventana_sigue(app, settings, mic_falso):
+    win = _ventana(settings)
+    mic_falso.ignore_writes = True
+    win.chk_mic_on.setChecked(False)
+    assert "no aplicó" in win.lbl_warning.text()
+    assert win.chk_mic_on.isChecked()  # se vuelve a mostrar el estado real
+    win.close()
+
+
+def test_la_rueda_sobre_microfono_en_el_orbe_cambia_el_volumen_y_en_otro_lado_el_tamano(
+    app, settings, mic_falso
+):
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QWheelEvent
+
+    win = _ventana(settings)
+    win.open_orb()
+    orb = win._orb
+    orb.resize(500, 500)
+    pasos = []
+    orb.volume_step.connect(pasos.append)
+    mic = orb.button_rects()["mic"].center()
+
+    def rueda(pos, dy):
+        ev = QWheelEvent(
+            QPointF(pos),
+            QPointF(pos),
+            QPoint(0, 0),
+            QPoint(0, dy),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        orb.wheelEvent(ev)
+
+    rueda(mic, 120)
+    rueda(mic, -120)
+    assert pasos == [5, -5]
+    assert mic_falso.volume == 80 + 5 - 5  # +5 y luego -5
+    assert "Volumen del micrófono" in orb.caption
+    ancho = orb.width()
+    rueda(orb._center(), 120)  # fuera de «Micrófono»: cambia el tamaño
+    assert orb.width() == ancho + 24
+    win.close()
+
+
+def test_el_menu_del_orbe_activa_o_silencia_el_microfono_de_windows(app, settings, mic_falso):
+    win = _ventana(settings)
+    win.open_orb()
+    assert win._orb.sys_mic_muted is False
+    win._orb.sys_mic_toggle_requested.emit()  # estaba activo: se silencia
+    assert mic_falso.muted and win._orb.sys_mic_muted is True
+    win._orb.sys_mic_toggle_requested.emit()
+    assert not mic_falso.muted
+    win.close()
