@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -51,6 +52,40 @@ def use_local_model_cache() -> Path:
     return cache
 
 
+def ensure_cached(repo: str) -> None:
+    """Asegura que ``repo`` está en la caché local; si falta, lo descarga UNA vez aunque la app esté sin red.
+
+    Tras el primer arranque la app trabaja con ``HF_HUB_OFFLINE=1``; un idioma nuevo (p. ej. la voz alemana)
+    necesita bajar su modelo una sola vez. Con la VPN apagada la descarga falla con un mensaje claro.
+    """
+    from huggingface_hub import constants, file_download, snapshot_download
+
+    try:
+        snapshot_download(repo, local_files_only=True)
+        return
+    except Exception:  # noqa: BLE001 - no está en la caché
+        pass
+    log.info("Descargando el modelo %s (solo la primera vez)…", repo)
+    previous_env, previous_const = os.environ.get("HF_HUB_OFFLINE"), constants.HF_HUB_OFFLINE
+    os.environ["HF_HUB_OFFLINE"], constants.HF_HUB_OFFLINE = "0", False
+    # Sin permiso de administrador Windows no deja crear enlaces simbólicos: se copian los archivos.
+    real_symlinks = file_download.are_symlinks_supported
+    file_download.are_symlinks_supported = lambda *a, **k: False
+    try:
+        snapshot_download(repo)
+    except Exception as exc:
+        raise RuntimeError(
+            f"No se pudo descargar el modelo de voz «{repo}»: {exc}. ¿Está conectada la VPN de Ford?"
+        ) from exc
+    finally:
+        file_download.are_symlinks_supported = real_symlinks
+        constants.HF_HUB_OFFLINE = previous_const
+        if previous_env is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = previous_env
+
+
 def models_ready_marker() -> Path:
     """Archivo que indica que los modelos ya se descargaron y cargaron correctamente una vez."""
     return app_home() / "models" / ".ready"
@@ -82,9 +117,13 @@ NLLB_CODES = {
     "fr": "fra_Latn",
     "de": "deu_Latn",
     "it": "ita_Latn",
+    "zh": "zho_Hans",
+    "ja": "jpn_Jpan",
 }
 # ISO 639-1 -> código de MMS-TTS (ISO 639-3)
-MMS_CODES = {"es": "spa", "en": "eng", "pt": "por", "fr": "fra", "de": "deu"}
+MMS_CODES = {"es": "spa", "en": "eng", "pt": "por", "fr": "fra", "de": "deu"}  # MMS no tiene chino ni japonés
+# ISO 639-1 -> código de idioma de XTTSv2
+XTTS_CODES = {"zh": "zh-cn"}
 
 
 class WhisperSTT(STTBackend):
@@ -310,18 +349,25 @@ class MMSTTS(TTSBackend):
         use_local_model_cache()
         self.sample_rate = 16000
         self._models: dict[str, tuple] = {}
+        self._lock = threading.Lock()  # la carga previa y la 1.ª frase no cargan el mismo modelo a la vez
 
     def _load(self, language: str):
-        if language not in self._models:
-            import torch
-            from transformers import AutoTokenizer, VitsModel
+        with self._lock:
+            if language not in self._models:
+                import torch
+                from transformers import AutoTokenizer, VitsModel
 
-            repo = f"facebook/mms-tts-{MMS_CODES[language]}"
-            self._models[language] = (
-                AutoTokenizer.from_pretrained(repo),
-                VitsModel.from_pretrained(repo, dtype=torch.float32).eval(),
-            )
-        return self._models[language]
+                repo = f"facebook/mms-tts-{MMS_CODES[language]}"
+                ensure_cached(repo)
+                self._models[language] = (
+                    AutoTokenizer.from_pretrained(repo),
+                    VitsModel.from_pretrained(repo, dtype=torch.float32).eval(),
+                )
+            return self._models[language]
+
+    def prepare(self, language: str) -> None:
+        """Descarga (si falta) y carga la voz de ``language`` antes de que haga falta."""
+        self._load(language)
 
     def synthesize(self, text: str, language: str) -> Iterator[np.ndarray]:
         import torch
@@ -419,7 +465,7 @@ class XTTSClone(TTSBackend):
         with torch.inference_mode():
             for chunk in self._model.inference_stream(
                 text,
-                language,
+                XTTS_CODES.get(language, language),
                 self._gpt_cond_latent,
                 self._speaker_embedding,
                 stream_chunk_size=chunk_size,

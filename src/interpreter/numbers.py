@@ -21,12 +21,15 @@ try:  # opcional: viene con coqui-tts; sin él se deletrean las cifras una a una
 except ImportError:  # pragma: no cover - depende del entorno
     _num2words = None
 
-LANG_CODES = {"en": "en", "fr": "fr", "pt": "pt_BR", "es": "es"}
+LANG_CODES = {"en": "en", "fr": "fr", "pt": "pt_BR", "es": "es", "de": "de", "zh": "zh", "ja": "ja"}
 DIGITS = {
     "en": ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"],
     "fr": ["zéro", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf"],
     "pt": ["zero", "um", "dois", "três", "quatro", "cinco", "seis", "sete", "oito", "nove"],
     "es": ["cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"],
+    "de": ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"],
+    "zh": list("零一二三四五六七八九"),
+    "ja": list("〇一二三四五六七八九"),
 }
 WORDS = {  # palabras sueltas que acompañan a las cifras
     "en": {
@@ -65,8 +68,35 @@ WORDS = {  # palabras sueltas que acompañan a las cifras
         "euros": "euros",
         "reais": "reales",
     },
+    "de": {
+        "percent": "Prozent",
+        "point": "Komma",
+        "minus": "minus",
+        "to": "bis",
+        "dollars": "Dollar",
+        "euros": "Euro",
+        "reais": "Real",
+    },
+    "zh": {
+        "percent": "百分之",  # en chino va antes del número
+        "point": "点",
+        "minus": "负",
+        "to": "到",
+        "dollars": "美元",
+        "euros": "欧元",
+        "reais": "雷亚尔",
+    },
+    "ja": {
+        "percent": "パーセント",
+        "point": "点",
+        "minus": "マイナス",
+        "to": "から",
+        "dollars": "ドル",
+        "euros": "ユーロ",
+        "reais": "レアル",
+    },
 }
-THOUSANDS_SEP = {"en": ",", "fr": " ", "pt": ".", "es": "."}
+THOUSANDS_SEP = {"en": ",", "fr": " ", "pt": ".", "es": ".", "de": ".", "zh": ",", "ja": ","}
 MAX_DIGITS = 15  # num2words llega mucho más lejos, pero un número así es un identificador, no una cantidad
 LONG_ID_DIGITS = 9  # sin separadores y con tantas cifras o más: teléfono/ID, se lee dígito a dígito
 
@@ -162,11 +192,22 @@ def spell_numbers(text: str, lang: str) -> str:
             return f"{hour} heures" + ("" if mi == 0 else f" {minutes}")
         if lang == "pt":
             return f"{hour} horas" + ("" if mi == 0 else f" e {minutes}")
+        if lang == "de":
+            return f"{hour} Uhr" + ("" if mi == 0 else f" {minutes}")
+        if lang == "zh":
+            return f"{hour}点" + ("整" if mi == 0 else f"{minutes}分")
+        if lang == "ja":
+            return f"{hour}時" + ("" if mi == 0 else f"{minutes}分")
         return f"{hour} en punto" if mi == 0 else f"{hour} y {minutes}"
 
     text = re.sub(rf"{_NOT_WORD}(\d{{1,2}}):(\d{{2}}){_AFTER}", clock, text)
+
     # Porcentajes: 50% -> fifty percent
-    text = re.sub(rf"({_NUM})\s?%", lambda m: f"{_read_number(m.group(1), lang)} {w['percent']}", text)
+    def percent(m: re.Match[str]) -> str:
+        number = _read_number(m.group(1), lang)
+        return f"{w['percent']}{number}" if lang == "zh" else f"{number} {w['percent']}"  # 百分之五十
+
+    text = re.sub(rf"({_NUM})\s?%", percent, text)
     # Ordinales: 1st, 2nd, 3rd, 4th / 1er, 2e, 3ème / 1º, 2ª
     text = re.sub(
         rf"{_NOT_WORD}(\d+)(?:st|nd|rd|th|er|re|ème|eme|e|º|ª|°){_AFTER}",

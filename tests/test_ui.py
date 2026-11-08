@@ -706,3 +706,19 @@ def test_la_version_se_ve_en_el_titulo_y_la_de_la_extension_en_el_aviso(app, set
     assert f"extensión v{expected_extension_version()}" in win.lbl_browser.text()
     assert "recárgala" not in win.lbl_browser.text()
     win.close()
+
+
+def test_los_idiomas_nuevos_estan_y_avisan_si_la_voz_elegida_no_los_habla(app, settings):
+    win = MainWindow(_builder, settings=settings, load_on_start=False, clone_is_available=True)
+    for code in ("de", "zh", "ja"):
+        assert win.cmb_target.findData(code) >= 0 and win.cmb_source.findData(code) >= 0
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("fast"))
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("de"))
+    assert (
+        win.lbl_warning.isHidden() or "no habla" not in win.lbl_warning.text()
+    )  # la genérica sí habla alemán
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("ja"))
+    assert not win.lbl_warning.isHidden() and "Japonés" in win.lbl_warning.text()
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("en"))
+    assert win.lbl_warning.isHidden() or "Japonés" not in win.lbl_warning.text()
+    win.close()
