@@ -71,6 +71,9 @@ def build_exe() -> int:
 
 
 def main() -> int:
+    if "--solo-payload" in sys.argv:  # para probar el instalador con el .bat, sin compilar el .exe
+        print(f"payload: {build_payload()} archivos (versión {app_version()})")
+        return 0
     if not ICON.is_file():
         print("Falta assets/interpreter.ico: ejecuta antes scripts/make_icon.py")
         return 1

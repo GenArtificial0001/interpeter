@@ -1,5 +1,5 @@
 @echo off
-rem VERSIONES: app 0.9.0 | extension del navegador 0.3.3  (actualizar junto con __init__.py y manifest.json)
+rem VERSIONES: app 0.9.1 | extension del navegador 0.3.3  (actualizar junto con __init__.py y manifest.json)
 rem Inicia Interpreter CON consola, para ver errores y mensajes de diagnostico.
 setlocal
 cd /d "%~dp0"
@@ -11,7 +11,7 @@ if not exist "%ENVDIR%\Scripts\python.exe" (
   exit /b 1
 )
 echo Usando el entorno: %ENVDIR%
-echo Interpreter 0.9.0 ^| extension del navegador 0.3.3 ^(recargala en edge://extensions si no coincide^)
+echo Interpreter 0.9.1 ^| extension del navegador 0.3.3 ^(recargala en edge://extensions si no coincide^)
 set PYTHONUTF8=1
 "%ENVDIR%\Scripts\python.exe" -m interpreter %*
 echo.

@@ -384,3 +384,8 @@ descarga: exige aceptar la licencia de Coqui (`COQUI_TOS_AGREED=1`), decisión d
 Probado: tests (`tests/test_setup.py`), el `.exe` abre y lee la versión, y una instalación real parcial
 (extraer + venv + dependencias base + accesos). NO probado: instalación completa con torch/modelos en otra PC, ni la
 instalación automática de Python (depende del proxy/permisos de esa máquina).
+
+### 25.1 Probar el instalador con .bat (0.9.1)
+`Instalar Interpreter (prueba).bat` empaqueta el código actual (`scripts/build_installer.py --solo-payload`) y abre la
+misma ventana del instalador sin compilar el `.exe`. Usa `.venv` (o `py`/`python`). Elegir una carpeta de instalación
+distinta del repo (por defecto `%USERPROFILE%\Interpreter`).
