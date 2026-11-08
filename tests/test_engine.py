@@ -429,6 +429,7 @@ def test_anti_eco_desactivado_no_descarta_nada():
 
 def test_default_backends_elige_yourtts_para_clone_fast(monkeypatch, tmp_path):
     from interpreter import engine as eng_mod
+    from interpreter import voices
     from interpreter.stages import backends
 
     elegidos = []
@@ -450,7 +451,7 @@ def test_default_backends_elige_yourtts_para_clone_fast(monkeypatch, tmp_path):
     monkeypatch.setenv("INTERPRETER_HOME", str(tmp_path))
     monkeypatch.setattr(backends, "YourTTSClone", FakeYour)
     monkeypatch.setattr(backends, "XTTSClone", FakeXtts)
-    monkeypatch.setattr(backends, "MMSTTS", FakeMms)
+    monkeypatch.setattr(voices, "VoiceBank", FakeMms)  # el perfil «fast» usa ahora el banco de voces
     monkeypatch.setattr(backends, "NLLBTranslator", FakeMT)
     monkeypatch.setattr(eng_mod, "make_stt", lambda cfg: Falso())
 
@@ -643,3 +644,32 @@ def test_cambiar_en_caliente_a_un_idioma_que_la_voz_no_habla_se_rechaza():
         assert eng.config.target == "fr"
     finally:
         eng.stop()
+
+
+def test_cambiar_la_voz_en_caliente_llega_al_banco_de_voces():
+    class Banco(FakeTTS):
+        def __init__(self):
+            super().__init__(chunks=1)
+            self.voz, self.preparadas = "auto", []
+
+        def set_voice(self, v):
+            self.voz = v
+
+        def prepare(self, lang):
+            self.preparadas.append(lang)
+
+    banco = Banco()
+    eng = Engine(
+        EngineConfig(),
+        EngineEvents(),
+        lambda cfg: (FakeSTT(), FakeMT(), banco),
+        lambda *a, **k: FakeCapture(*a, **k),
+        lambda *a: FakePlayer(*a),
+    )
+    eng.load()
+    eng.set_voice("sapi:Microsoft Sabina Desktop")
+    assert (
+        eng.config.voice == "sapi:Microsoft Sabina Desktop" and banco.voz == "sapi:Microsoft Sabina Desktop"
+    )
+    assert wait_for(lambda: banco.preparadas == ["en"])  # la carga va en segundo plano
+    eng.close()

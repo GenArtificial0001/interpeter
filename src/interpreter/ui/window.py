@@ -49,6 +49,7 @@ from ..engine import (
 from ..glossary import Glossary
 from ..pipeline import UtteranceMetrics
 from ..stages.backends import app_home
+from ..voices import SapiVoice, installed_sapi_voices, voices_for
 from . import theme
 from .glossary_dialog import GlossaryDialog
 from .voice_dialog import VoiceSampleDialog
@@ -145,6 +146,7 @@ class Bridge(QObject):
     segment = Signal(float)
     dropped = Signal(str, float)
     webmic = Signal(int)
+    voices_ready = Signal()
 
     def events(self) -> EngineEvents:
         return EngineEvents(
@@ -187,8 +189,11 @@ class MainWindow(QMainWindow):
         clone_is_available: bool | None = None,
         license_prompt: Callable[..., bool] = _ask_license,
         glossary_path: Path | None = None,
+        voice_lister: Callable[[], list[SapiVoice]] = installed_sapi_voices,
     ) -> None:
         super().__init__()
+        self._sapi_voices: list[SapiVoice] = []
+        self._active_voice = "auto"
         self._glossary_path = glossary_path or app_home() / "glossary.json"
         self._clone_available = clone_available() if clone_is_available is None else clone_is_available
         self._license_prompt = license_prompt
@@ -218,6 +223,7 @@ class MainWindow(QMainWindow):
         self._bridge.loop.connect(self._on_loop_result)
         self._bridge.dropped.connect(self._on_dropped)
         self._bridge.webmic.connect(self._on_webmic_clients)
+        self._bridge.voices_ready.connect(self._fill_voices)
         self._bridge.segment.connect(
             lambda sec: self._log("🎙", f"frase detectada ({sec:.1f} s), traduciendo…")
         )
@@ -229,6 +235,11 @@ class MainWindow(QMainWindow):
         self._fit_initial_size()
         self._load_devices()
         self._restore_settings()
+        self._fill_voices()
+        # Las voces de Windows se consultan en segundo plano (~1 s) para no demorar la ventana.
+        threading.Thread(
+            target=self._load_sapi_voices, args=(voice_lister,), name="voces-windows", daemon=True
+        ).start()
 
         self._meter_timer = QTimer(self)
         self._meter_timer.timeout.connect(self._tick_meter)
@@ -434,8 +445,15 @@ class MainWindow(QMainWindow):
         self.btn_rec.clicked.connect(self._record_voice)
         self.lbl_ref = QLabel("")
         self.lbl_ref.setObjectName("muted")
+        self.lbl_voice = self._muted_label("Voz")
+        self.cmb_voice = QComboBox()
+        self.cmb_voice.setToolTip("Voz de hombre o de mujer para el perfil «Rápido (voz genérica)».")
+        self.cmb_voice.setMinimumWidth(190)
+        self.cmb_voice.activated.connect(self._on_voice_changed)
         adv.addWidget(self._muted_label("Perfil de voz"))
         adv.addWidget(self.cmb_profile)
+        adv.addWidget(self.lbl_voice)
+        adv.addWidget(self.cmb_voice)
         adv.addWidget(self.btn_rec)
         adv.addWidget(self.btn_ref)
         adv.addWidget(self.lbl_ref, 1)
@@ -691,6 +709,7 @@ class MainWindow(QMainWindow):
         cfg.output_device = None if browser else self.cmb_output.currentData()
         cfg.pause_ms = int(self.cmb_pause.currentData())
         cfg.anti_echo = self.chk_echo.isChecked()
+        cfg.voice = self.cmb_voice.currentData() or "auto"
 
     def _toggle(self) -> None:
         if self.engine.state is EngineState.RUNNING:
@@ -708,6 +727,7 @@ class MainWindow(QMainWindow):
             self._on_error(str(exc))
 
     def _on_target_changed(self) -> None:
+        self._fill_voices()  # cada idioma tiene sus voces (y recuerda la última que elegiste en él)
         if self.engine.state is EngineState.RUNNING:
             try:
                 self.engine.set_target_language(self.cmb_target.currentData())
@@ -715,8 +735,10 @@ class MainWindow(QMainWindow):
                 self.cmb_target.blockSignals(True)
                 self.cmb_target.setCurrentIndex(self.cmb_target.findData(self.engine.config.target))
                 self.cmb_target.blockSignals(False)
+                self._fill_voices()
                 self._show_warning(str(exc))
                 return
+            self.engine.set_voice(self.cmb_voice.currentData() or "auto")
         self._check_devices()
 
     def _accept_license_if_needed(self, profile: str = "clone") -> bool:
@@ -749,7 +771,55 @@ class MainWindow(QMainWindow):
         if self.engine.state in (EngineState.READY, EngineState.ERROR, EngineState.IDLE):
             self.reload_models()
 
+    # -- voz genérica: hombre o mujer ---------------------------------------------------------------------
+
+    def _load_sapi_voices(self, lister: Callable[[], list[SapiVoice]]) -> None:
+        try:
+            self._sapi_voices = lister()
+        except Exception:  # noqa: BLE001 - sin voces de Windows quedan las demás
+            log.warning("No se pudieron listar las voces de Windows", exc_info=True)
+            return
+        self._bridge.voices_ready.emit()
+
+    def _fill_voices(self, prefer: str | None = None) -> None:
+        """Lista las voces (hombre/mujer) del idioma de salida y recuerda la última elegida en cada idioma."""
+        target = self.cmb_target.currentData()
+        if not target:
+            return
+        saved = str(self._settings.value(f"voice_{target}", "", type=str))
+        keep = prefer or (saved if saved else self.cmb_voice.currentData() if self.cmb_voice.count() else "")
+        self.cmb_voice.blockSignals(True)
+        self.cmb_voice.clear()
+        for v in voices_for(target, self._sapi_voices):
+            self.cmb_voice.addItem(v.title, v.id)
+        idx = self.cmb_voice.findData(keep) if keep else -1
+        self.cmb_voice.setCurrentIndex(max(idx, 0))
+        self.cmb_voice.blockSignals(False)
+        self.cmb_voice.setEnabled(self.cmb_voice.count() > 1)
+        self._active_voice = self.cmb_voice.currentData() or "auto"
+        self.engine.config.voice = self._active_voice
+
+    def _on_voice_changed(self) -> None:
+        voice_id = self.cmb_voice.currentData()
+        voices = {v.id: v for v in voices_for(self.cmb_target.currentData(), self._sapi_voices)}
+        voice = voices.get(voice_id)
+        if voice is not None and voice.license and not self._accept_license_if_needed(voice.license):
+            self._fill_voices(
+                prefer=self._active_voice
+            )  # no aceptó la licencia de esa voz: vuelve a la anterior
+            return
+        self._settings.setValue(f"voice_{self.cmb_target.currentData()}", voice_id)
+        self._active_voice = voice_id
+        self.engine.config.voice = voice_id
+        if self.engine.state in (EngineState.READY, EngineState.RUNNING) and hasattr(
+            self.engine, "set_voice"
+        ):
+            self.engine.set_voice(voice_id)
+
     def _sync_profile_widgets(self) -> None:
+        generic = self.cmb_profile.currentData() == "fast"
+        self.lbl_voice.setVisible(generic)
+        self.cmb_voice.setVisible(generic)
         # Grabar la muestra se puede hacer siempre; elegir un .wav y su nombre solo importan al clonar.
         clone = self.cmb_profile.currentData() in CLONE_PROFILES
         self.btn_ref.setVisible(clone)

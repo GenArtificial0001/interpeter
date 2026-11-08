@@ -91,6 +91,12 @@ Para clonar: «Grabar mi voz…» (25 s) y elegir el perfil; la primera vez se p
 (uso no comercial). Los dos perfiles clonados necesitan `coqui-tts`, que exige `torch<2.8` y
 `transformers<5` (extra `clone`). El `.bat` usa `.venv-clone`, que ya los tiene.
 
+## Voz de hombre o de mujer
+
+En el perfil «Rápido (voz genérica)» el selector **Voz** ofrece varias voces de hombre y de mujer para el idioma de
+salida (la voz de siempre es de hombre). Incluye voces de Windows si las tienes instaladas (p. ej. Sabina y Helena en
+español, Zira en inglés). Cada idioma recuerda la última voz elegida.
+
 ## Eco y ruido
 
 Whisper puede «inventar» frases sobre ruido o sobre la propia voz traducida (p. ej. «¡Suscríbete!»). La

@@ -78,6 +78,7 @@ class EngineConfig:
     accelerator: str = "auto"  # "auto" (GPU Intel con OpenVINO si existe) | "cpu"
     beams: int = 1
     tts_profile: str = "fast"  # "fast" (sin clonar) | "clone_fast" (YourTTS) | "clone" (XTTSv2)
+    voice: str = "auto"  # voz del perfil «fast» (ver voices.py); «auto» = la predeterminada del idioma
     reference_wav: str | None = None
     vad_mode: str = "auto"  # "auto" (umbral adaptativo al ruido del micrófono) | "fixed"
     vad_threshold_db: float = -42.0  # solo se usa con vad_mode="fixed"
@@ -131,12 +132,12 @@ def make_stt(cfg: EngineConfig) -> STTBackend:
 def default_backends(cfg: EngineConfig) -> Backends:
     """Carga los modelos reales (lento: descarga la primera vez)."""
     from .stages.backends import (
-        MMSTTS,
         NLLBTranslator,
         XTTSClone,
         YourTTSClone,
         models_ready_marker,
     )
+    from .voices import VoiceBank
 
     stt = make_stt(cfg)
     mt = NLLBTranslator(cfg.mt_model, cfg.threads, cfg.quantize, cfg.beams)
@@ -146,7 +147,7 @@ def default_backends(cfg: EngineConfig) -> Backends:
             raise EngineError("El perfil clonado necesita una muestra de tu voz: usa «Grabar mi voz…».")
         tts: TTSBackend = YourTTSClone(reference) if cfg.tts_profile == "clone_fast" else XTTSClone(reference)
     else:
-        tts = MMSTTS()
+        tts = VoiceBank(cfg.voice)
     # Cargaron bien: a partir de ahora el arranque no necesita red.
     marker = models_ready_marker()
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -256,6 +257,9 @@ class Engine:
             if problem:
                 raise EngineError(problem)
             stt, mt, tts = self._backends
+            if hasattr(tts, "set_voice"):
+                tts.set_voice(cfg.voice)  # la voz elegida en la ventana
+            self._prefetch_voice(cfg.target)
             if hasattr(stt, "glossary"):
                 stt.glossary = self.glossary  # sesgo del reconocimiento y corrección de términos
             self._pipeline = Pipeline(
@@ -307,6 +311,9 @@ class Engine:
 
     def close(self) -> None:
         self.stop()
+        tts = self._backends[2] if self._backends else None
+        if hasattr(tts, "close"):
+            tts.close()
         self._backends = None
         self._state = EngineState.IDLE
         if self._webmic is not None:
@@ -341,11 +348,35 @@ class Engine:
 
     # -- controles en caliente ---------------------------------------------------------------------
 
+    def set_voice(self, voice_id: str) -> None:
+        """Cambia la voz genérica (hombre/mujer) en caliente; se oye desde la siguiente frase."""
+        self.config.voice = voice_id
+        tts = self._backends[2] if self._backends else None
+        if hasattr(tts, "set_voice"):
+            tts.set_voice(voice_id)
+            self._prefetch_voice(self.config.target)
+
+    def _prefetch_voice(self, language: str) -> None:
+        """Carga la voz elegida en segundo plano (la primera vez tarda unos segundos)."""
+        prepare = getattr(self._backends[2], "prepare", None) if self._backends else None
+        if prepare is None:
+            return
+
+        def work() -> None:
+            try:
+                prepare(language)
+            except Exception as exc:  # noqa: BLE001 - se informa al usuario; no debe tumbar nada
+                log.warning("No se pudo preparar la voz de %s", language, exc_info=exc)
+                self.events.on_error(f"No se pudo cargar la voz elegida: {exc}")
+
+        threading.Thread(target=work, name="voz-previa", daemon=True).start()
+
     def set_target_language(self, language: str) -> None:
         problem = voice_problem(self.config.tts_profile, language)
         if problem:
             raise EngineError(problem)
         self.config.target = language
+        self._prefetch_voice(language)
         if self._pipeline is not None:
             self._pipeline.set_target_language(language)
 

@@ -11,7 +11,7 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.2.5**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+- **Versiones al cierre:** app **0.3.1**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
   en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
@@ -22,6 +22,10 @@ verificado o como hipótesis.
 > 0.2.5: `phrasebook.py` traduce sin el modelo las frases cortas de uso diario (NLLB las inventa: «Hello.» →
 > «¿Qué pasa?»); `clean_translation` descarta réplicas inventadas tras « - »; Whisper descarta alucinaciones
 > conocidas («Thanks for watching»); los avisos de idioma se borran al cambiar «Yo hablo».
+
+> 0.3.1: **voces de hombre y de mujer** en el perfil «Rápido (voz genérica)» (`voices.py`): catálogo por idioma
+> (MMS, YourTTS incorporadas, Coqui css10 y voces de Windows/SAPI con el género que informa Windows), selector «Voz»
+> en la ventana, recordado por idioma; las de YourTTS piden aceptar su licencia. Probadas con tono (F0) y Whisper.
 
 ## 2. Línea de tiempo (commits relevantes en `dev`)
 

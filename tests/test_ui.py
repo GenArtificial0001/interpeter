@@ -721,3 +721,74 @@ def test_los_avisos_viejos_de_pestana_se_borran_al_conectar_una(app, settings):
     win._on_webmic_clients(1)
     assert win.lbl_warning.isHidden() and win.lbl_loop.isHidden()
     win.close()
+
+
+# -- voz genérica: hombre o mujer ---------------------------------------------------------------------------
+
+
+def _sapi_falsas():
+    from interpreter.voices import SapiVoice
+
+    return [
+        SapiVoice("Microsoft Sabina Desktop", "es-MX", "mujer"),
+        SapiVoice("Microsoft David Desktop", "en-US", "hombre"),
+    ]
+
+
+def _ventana_con_voces(settings, **kw):
+    sapi = _sapi_falsas()
+    win = MainWindow(_builder, settings=settings, load_on_start=False, voice_lister=lambda: sapi, **kw)
+    win._sapi_voices = sapi  # sin esperar al hilo que las lista
+    return win
+
+
+def test_la_voz_generica_ofrece_hombre_y_mujer_del_idioma_de_salida(app, settings):
+    win = _ventana_con_voces(settings)
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("es"))
+    titulos = [win.cmb_voice.itemText(i) for i in range(win.cmb_voice.count())]
+    assert titulos[0].startswith("Hombre") and "MMS" in titulos[0]  # la de siempre, primera
+    assert any(t.startswith("Mujer") and "Sabina" in t for t in titulos)
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("en"))
+    titulos = [win.cmb_voice.itemText(i) for i in range(win.cmb_voice.count())]
+    assert any(t.startswith("Mujer") for t in titulos) and any(t.startswith("Hombre") for t in titulos)
+    assert not any("Sabina" in t for t in titulos)  # las voces de Windows de español no salen en inglés
+    win.close()
+
+
+def test_el_selector_de_voz_solo_se_ve_con_la_voz_generica(app, settings):
+    win = _ventana_con_voces(settings, clone_is_available=True, license_prompt=lambda *a: True)
+    win.show()
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("fast"))
+    win._sync_profile_widgets()
+    assert win.cmb_voice.isVisible()
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone_fast"))
+    win._sync_profile_widgets()
+    assert not win.cmb_voice.isVisible()
+    win.close()
+
+
+def test_elegir_una_voz_la_guarda_la_recuerda_por_idioma_y_la_aplica(app, settings):
+    win = _ventana_con_voces(settings)
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("es"))
+    idx = next(i for i in range(win.cmb_voice.count()) if "Sabina" in win.cmb_voice.itemText(i))
+    win.cmb_voice.setCurrentIndex(idx)
+    win._on_voice_changed()
+    assert win.engine.config.voice == "sapi:Microsoft Sabina Desktop"
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("en"))  # otro idioma: sus propias voces
+    assert win.engine.config.voice != "sapi:Microsoft Sabina Desktop"
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("es"))  # al volver, recuerda la de español
+    assert win.cmb_voice.currentData() == "sapi:Microsoft Sabina Desktop"
+    assert win._settings.value("voice_es", "", type=str) == "sapi:Microsoft Sabina Desktop"
+    win.close()
+
+
+def test_una_voz_de_yourtts_pide_aceptar_su_licencia(app, settings):
+    preguntas = []
+    win = _ventana_con_voces(settings, license_prompt=lambda *a: preguntas.append(a[-1]) or False)
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("pt"))
+    mujer = next(i for i in range(win.cmb_voice.count()) if win.cmb_voice.itemText(i).startswith("Mujer"))
+    win.cmb_voice.setCurrentIndex(mujer)
+    win._on_voice_changed()
+    assert preguntas == ["clone_fast"]
+    assert win.engine.config.voice != "yourtts:female-pt-4"  # sin aceptar la licencia no se usa
+    win.close()
