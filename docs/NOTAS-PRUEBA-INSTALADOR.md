@@ -29,6 +29,12 @@ Estado: ✅ corregido · 🔧 en curso · ⏳ pendiente / sin decidir. Quien pru
 |---|---|---|
 | 7 | Reemplazar «Historial» del orbe. Primero se propuso «Idiomas ⇄» (el usuario dijo que no), luego «Glosario» (elegido por error por mí; el usuario nunca lo pidió). | ✅ 0.9.3: botón derecho = «Entrada» (menú para elegir el micrófono) y un icono nuevo «Salida» abajo (menú para elegir dónde suena la voz traducida); «Micrófono» (silenciar) queda abajo a la izquierda. Los menús cambian el mismo desplegable de Ajustes. El botón «Glosario» de Ajustes no se tocó. |
 
+| 8 | Los menús de Entrada/Salida salían con letra negra sobre fondo negro (ilegibles). | ✅ 0.10.0: `theme.MENU_STYLE` (fondo blanco, selección azul suave) en todos los menús del orbe. |
+| 9 | Cerrar la ventana de Ajustes apagaba el intérprete; debía solo ocultarla como al arrancar, y «Ajustes» del orbe debía ocultarla al pulsarlo otra vez. | ✅ 0.10.0: con el orbe abierto, la X de Ajustes solo oculta; «Ajustes» alterna mostrar/ocultar. |
+| 10 | Iconos lineales blancos en el orbe para operar todo desde él: «Hablo» (persona con la mano levantada + idioma), «Escuchan» (oreja + idioma), «Voz» (boca), más Entrada, Salida, Micrófono, Ajustes y «Cerrar». El primer icono de la mano salió «horrible». | ✅ 0.10.0: se rehízo la mano (persona + brazo + tres dedos). |
+| 11 | Falta un icono de cerrar desde el orbe. | ✅ 0.10.0: «Cerrar» (símbolo de apagado, arriba a la derecha) cierra la aplicación completa. |
+| 12 | Agrandar un poco el orbe. | ✅ 0.10.0: tamaño inicial 480 → 640 px (la rueda sigue cambiándolo entre 320 y 900). |
+
 ## Para decidir
 
 | # | Tema | Estado |

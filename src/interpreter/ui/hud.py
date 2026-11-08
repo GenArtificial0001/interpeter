@@ -33,7 +33,9 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QMenu, QWidget
 
-SIZE = 480  # tamaño inicial (la rueda del ratón lo cambia entre 320 y 900)
+from .theme import MENU_STYLE
+
+SIZE = 640  # tamaño inicial (la rueda del ratón lo cambia entre 320 y 900)
 BARS = 96
 TICKS = 90
 VU_STEPS = 24  # pasos de la barra de escucha (animación «ligera»: solo se repinta si cambia el paso)
@@ -104,6 +106,14 @@ class OrbWindow(QWidget):
     settings_requested = Signal()
     input_requested = Signal()  # clic en «Entrada»: elegir el micrófono
     output_requested = Signal()  # clic en «Salida»: elegir dónde suena la voz traducida
+    speak_requested = Signal()  # clic en «Hablo»: elegir el idioma que hablas
+    listen_requested = Signal()  # clic en «Escuchan»: elegir el idioma que escuchan
+    voice_requested = Signal()  # clic en «Voz»: elegir el perfil de voz
+    swap_requested = Signal()  # menú: invertir los idiomas
+    glossary_requested = Signal()  # menú: abrir el glosario
+    echo_toggle_requested = Signal()  # menú: activar / desactivar el anti-eco
+    pause_requested = Signal()  # menú: elegir la pausa para cerrar frase
+    quit_requested = Signal()  # clic en «Cerrar»: cierra la aplicación completa (orbe, motor y puerto)
     classic_requested = Signal()  # menú: volver a la ventana clásica
     closed = Signal()  # la ventana se cerró (Alt+F4 o menú «Salir»)
     volume_step = Signal(int)  # rueda sobre «Micrófono»: +5 / -5 (volumen de Windows)
@@ -111,7 +121,18 @@ class OrbWindow(QWidget):
     reconnect_requested = Signal()  # menú: reiniciar el micrófono
     animation_changed = Signal(str)  # el modo de animación cambió (menú o apagado automático por lentitud)
 
-    BUTTONS = ("settings", "input", "mic", "output")  # orden de hit-test
+    # Botones en arco bajo el título: ángulo en grados (0 = derecha, 90 = abajo, 180 = izquierda).
+    SLOTS = {
+        "speak": 180,
+        "voice": 150,
+        "input": 120,
+        "mic": 90,
+        "output": 60,
+        "settings": 30,
+        "listen": 0,
+        "close": -42,
+    }
+    BUTTONS = tuple(SLOTS)  # orden de hit-test
 
     def __init__(self, size: int = SIZE, now: Callable[[], float] = time.monotonic) -> None:
         super().__init__()
@@ -146,6 +167,7 @@ class OrbWindow(QWidget):
         self.stage_label = ""
         self.latency: tuple[float, float] | None = None  # (último, mediana) en segundos
         self._paint_ms: deque[float] = deque(maxlen=SLOW_PAINT_FRAMES)
+        self.quit_requested.connect(self.close)  # «Cerrar» = «Salir de Interpreter»
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(80)
@@ -211,16 +233,20 @@ class OrbWindow(QWidget):
 
     def button_rects(self) -> dict[str, QRectF]:
         u, c = self._unit(), self._center()
-        w, h = u * 0.26, u * 0.22
-        return {  # dentro del anillo grande (radio 0,52): a los lados y debajo del orbe, como en el diseño
-            "settings": QRectF(c.x() - u * 0.41 - w / 2, c.y() - h / 2, w, h),
-            "input": QRectF(c.x() + u * 0.41 - w / 2, c.y() - h / 2, w, h),
-            "mic": QRectF(c.x() - u * 0.15 - w / 2, c.y() + u * 0.255, w, h),
-            "output": QRectF(c.x() + u * 0.15 - w / 2, c.y() + u * 0.255, w, h),
-        }
+        w, h, radius = (
+            u * 0.20,
+            u * 0.16,
+            u * 0.45,
+        )  # sobre el anillo grande, de izquierda a derecha por abajo
+        rects = {}
+        for name, deg in self.SLOTS.items():
+            ang = math.radians(deg)
+            cx, cy = c.x() + radius * math.cos(ang), c.y() + radius * math.sin(ang)
+            rects[name] = QRectF(cx - w / 2, cy - h / 2, w, h)
+        return rects
 
     def hit_test(self, pos: QPointF) -> str:
-        """``orb`` | ``settings`` | ``input`` | ``mic`` | ``output`` | ``drag`` (resto) | ``none``."""
+        """``orb`` | uno de ``SLOTS`` | ``drag`` (resto del círculo) | ``none``."""
         c, u = self._center(), self._unit()
         d = math.hypot(pos.x() - c.x(), pos.y() - c.y())
         if d <= u * 0.17:
@@ -580,29 +606,41 @@ class OrbWindow(QWidget):
 
     def _draw_buttons(self, p: QPainter, accent: QColor) -> None:
         rects = self.button_rects()
-        labels = {"settings": "Ajustes", "input": "Entrada", "mic": "Micrófono", "output": "Salida"}
-        font = self._font(self._unit() * 0.056, QFont.Weight.DemiBold)
+        labels = {
+            "speak": self.src_name,  # el idioma actual (p. ej. «Español») bajo el icono de la persona
+            "listen": self.dst_name,
+            "voice": "Voz",
+            "input": "Entrada",
+            "mic": "Micrófono",
+            "output": "Salida",
+            "settings": "Ajustes",
+            "close": "Cerrar",
+        }
+        icons = {
+            "speak": self._icon_hand,
+            "listen": self._icon_ear,
+            "voice": self._icon_mouth,
+            "input": self._icon_wave,
+            "mic": self._icon_mic,
+            "output": self._icon_speaker,
+            "settings": self._icon_gear,
+            "close": self._icon_power,
+        }
+        font = self._font(self._unit() * 0.043, QFont.Weight.DemiBold)
         for name, rect in rects.items():
             col = QColor("#ffffff")
-            if name == "mic" and self.muted:
-                col = QColor("#ff6b6b")
-            pen = QPen(col, max(1.6, self._unit() * 0.012), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            if (name == "mic" and self.muted) or name == "close":
+                col = QColor("#ff8a8a") if name == "close" else QColor("#ff6b6b")
+            pen = QPen(col, max(1.5, self._unit() * 0.010), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
-            icon_area = QRectF(rect.x(), rect.y(), rect.width(), rect.height() * 0.58)
-            icons = {
-                "settings": self._icon_gear,
-                "input": self._icon_wave,
-                "mic": self._icon_mic,
-                "output": self._icon_speaker,
-            }
-            icons[name](p, icon_area)
+            icons[name](p, QRectF(rect.x(), rect.y(), rect.width(), rect.height() * 0.60))
             p.setFont(font)
             p.setPen(col)
             p.drawText(
                 QRectF(
-                    rect.x() - 12, rect.y() + rect.height() * 0.58, rect.width() + 24, rect.height() * 0.42
+                    rect.x() - 14, rect.y() + rect.height() * 0.60, rect.width() + 28, rect.height() * 0.40
                 ),
                 Qt.AlignmentFlag.AlignCenter,
                 labels[name],
@@ -620,6 +658,109 @@ class OrbWindow(QWidget):
         p.drawPath(path)
         p.drawEllipse(c, rad * 0.85, rad * 0.85)
         p.drawEllipse(c, rad * 0.35, rad * 0.35)
+
+    @staticmethod
+    def _icon_hand(p: QPainter, r: QRectF) -> None:
+        """Persona con la mano abierta levantada («yo hablo» / pido la palabra)."""
+        c = r.center()
+        h = min(r.width(), r.height()) * 1.15
+        p.drawEllipse(QPointF(c.x() + h * 0.14, c.y() + h * 0.06), h * 0.12, h * 0.12)  # cabeza
+        p.drawArc(QRectF(c.x() - h * 0.10, c.y() + h * 0.26, h * 0.50, h * 0.44), 0, 180 * 16)  # hombros
+        wrist = QPointF(c.x() - h * 0.19, c.y() - h * 0.02)
+        p.drawLine(QPointF(c.x() - h * 0.07, c.y() + h * 0.40), wrist)  # brazo
+        for deg in (-32, 0, 32):  # mano abierta: tres dedos en abanico
+            a = math.radians(deg)
+            p.drawLine(wrist, QPointF(wrist.x() + h * 0.19 * math.sin(a), wrist.y() - h * 0.19 * math.cos(a)))
+
+    @staticmethod
+    def _icon_ear(p: QPainter, r: QRectF) -> None:
+        """Oreja («escuchan»)."""
+        c = r.center()
+        h = min(r.width(), r.height()) * 1.15
+        path = QPainterPath()
+        path.moveTo(c.x() - h * 0.05, c.y() + h * 0.36)
+        path.cubicTo(
+            c.x() + h * 0.10,
+            c.y() + h * 0.40,
+            c.x() + h * 0.16,
+            c.y() + h * 0.22,
+            c.x() + h * 0.18,
+            c.y() + h * 0.12,
+        )
+        path.cubicTo(
+            c.x() + h * 0.24,
+            c.y() - h * 0.02,
+            c.x() + h * 0.30,
+            c.y() - h * 0.10,
+            c.x() + h * 0.30,
+            c.y() - h * 0.20,
+        )
+        path.cubicTo(
+            c.x() + h * 0.30,
+            c.y() - h * 0.44,
+            c.x() - h * 0.28,
+            c.y() - h * 0.50,
+            c.x() - h * 0.28,
+            c.y() - h * 0.14,
+        )
+        path.cubicTo(
+            c.x() - h * 0.28,
+            c.y() - h * 0.06,
+            c.x() - h * 0.22,
+            c.y() + h * 0.02,
+            c.x() - h * 0.20,
+            c.y() + h * 0.06,
+        )
+        p.drawPath(path)
+        inner = QPainterPath()
+        inner.moveTo(c.x() - h * 0.08, c.y() + h * 0.12)
+        inner.cubicTo(
+            c.x() - h * 0.16,
+            c.y() - h * 0.02,
+            c.x() - h * 0.14,
+            c.y() - h * 0.26,
+            c.x() + h * 0.04,
+            c.y() - h * 0.26,
+        )
+        inner.cubicTo(
+            c.x() + h * 0.16,
+            c.y() - h * 0.26,
+            c.x() + h * 0.16,
+            c.y() - h * 0.10,
+            c.x() + h * 0.08,
+            c.y() - h * 0.02,
+        )
+        p.drawPath(inner)
+
+    @staticmethod
+    def _icon_mouth(p: QPainter, r: QRectF) -> None:
+        """Boca («voz»)."""
+        c = r.center()
+        h = min(r.width(), r.height()) * 1.15
+        left, right = QPointF(c.x() - h * 0.34, c.y()), QPointF(c.x() + h * 0.34, c.y())
+        upper = QPainterPath(left)
+        upper.cubicTo(
+            c.x() - h * 0.18, c.y() - h * 0.24, c.x() - h * 0.06, c.y() - h * 0.12, c.x(), c.y() - h * 0.12
+        )
+        upper.cubicTo(
+            c.x() + h * 0.06, c.y() - h * 0.12, c.x() + h * 0.18, c.y() - h * 0.24, right.x(), right.y()
+        )
+        lower = QPainterPath(left)
+        lower.cubicTo(
+            c.x() - h * 0.16, c.y() + h * 0.30, c.x() + h * 0.16, c.y() + h * 0.30, right.x(), right.y()
+        )
+        p.drawPath(upper)
+        p.drawPath(lower)
+        p.drawLine(left, right)
+
+    @staticmethod
+    def _icon_power(p: QPainter, r: QRectF) -> None:
+        """Símbolo de apagado (cerrar la aplicación)."""
+        c = r.center()
+        h = min(r.width(), r.height()) * 1.05
+        rad = h * 0.30
+        p.drawArc(QRectF(c.x() - rad, c.y() - rad + h * 0.04, rad * 2, rad * 2), 120 * 16, 300 * 16)
+        p.drawLine(QPointF(c.x(), c.y() - h * 0.36), QPointF(c.x(), c.y() - h * 0.04))
 
     @staticmethod
     def _icon_wave(p: QPainter, r: QRectF) -> None:
@@ -682,6 +823,10 @@ class OrbWindow(QWidget):
             "settings": self.settings_requested,
             "input": self.input_requested,
             "output": self.output_requested,
+            "speak": self.speak_requested,
+            "listen": self.listen_requested,
+            "voice": self.voice_requested,
+            "close": self.quit_requested,
             "mic": self.mic_requested,
         }
         if zone in signals:
@@ -689,6 +834,7 @@ class OrbWindow(QWidget):
 
     def contextMenuEvent(self, event) -> None:  # noqa: ANN001, N802
         menu = QMenu(self)
+        menu.setStyleSheet(MENU_STYLE)
         top = QAction("Siempre visible", menu, checkable=True)
         top.setChecked(bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
         top.toggled.connect(self.set_always_on_top)
@@ -699,6 +845,12 @@ class OrbWindow(QWidget):
             act.setChecked(mode == self.animation)
             act.triggered.connect(lambda _=False, m=mode: self.set_animation(m))
             anim.addAction(act)
+        menu.addSeparator()
+        menu.addAction("Invertir idiomas  ⇄").triggered.connect(self.swap_requested.emit)
+        menu.addAction("Pausa para cerrar frase…").triggered.connect(self.pause_requested.emit)
+        menu.addAction("Anti-eco: activar / desactivar").triggered.connect(self.echo_toggle_requested.emit)
+        menu.addAction("Glosario…").triggered.connect(self.glossary_requested.emit)
+        menu.addSeparator()
         menu.addAction("Encender micrófono" if self.muted else "Apagar micrófono").triggered.connect(
             self.sys_mic_toggle_requested.emit
         )

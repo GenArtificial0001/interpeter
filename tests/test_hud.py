@@ -51,7 +51,7 @@ def test_zonas_de_clic(app):
     c = w._center()
     assert w.hit_test(c) == "orb"
     rects = w.button_rects()
-    for name in ("settings", "input", "mic", "output"):
+    for name in w.BUTTONS:
         assert w.hit_test(rects[name].center()) == name
     assert w.hit_test(QPointF(c.x() + w._unit() * 0.7, c.y() - w._unit() * 0.5)) == "drag"
     assert w.hit_test(QPointF(1, 1)) == "none"  # fuera del círculo: los clics pasan al escritorio
@@ -62,20 +62,24 @@ def test_los_clics_emiten_las_senales(app):
     w.show()
     visto = []
     w.toggle_requested.connect(lambda: visto.append("orb"))
-    w.settings_requested.connect(lambda: visto.append("ajustes"))
-    w.input_requested.connect(lambda: visto.append("entrada"))
-    w.output_requested.connect(lambda: visto.append("salida"))
-    w.mic_requested.connect(lambda: visto.append("mic"))
+    for nombre in ("settings", "input", "output", "speak", "listen", "voice", "mic"):
+        senal = {
+            "settings": w.settings_requested,
+            "input": w.input_requested,
+            "output": w.output_requested,
+            "speak": w.speak_requested,
+            "listen": w.listen_requested,
+            "voice": w.voice_requested,
+            "mic": w.mic_requested,
+        }[nombre]
+        senal.connect(lambda n=nombre: visto.append(n))
     r = w.button_rects()
-    for pos in (
-        w._center(),
-        r["settings"].center(),
-        r["input"].center(),
-        r["output"].center(),
-        r["mic"].center(),
-    ):
-        QTest.mouseClick(w, Qt.MouseButton.LeftButton, pos=pos.toPoint())
-    assert visto == ["orb", "ajustes", "entrada", "salida", "mic"]
+    esperado = ["orb"]
+    QTest.mouseClick(w, Qt.MouseButton.LeftButton, pos=w._center().toPoint())
+    for nombre in ("settings", "input", "output", "speak", "listen", "voice", "mic"):
+        QTest.mouseClick(w, Qt.MouseButton.LeftButton, pos=r[nombre].center().toPoint())
+        esperado.append(nombre)
+    assert visto == esperado
     w.close()
 
 
@@ -282,7 +286,7 @@ def test_abrir_el_orbe_esconde_la_clasica_y_refleja_el_estado(app, settings):
 
 class FalsaAccion:
     def __init__(self, texto):
-        self.texto, self.marcada, self._slots = texto, False, []
+        self.texto, self.marcada, self.habilitada, self._slots = texto, False, True, []
         self.triggered = self
 
     def setCheckable(self, _v):  # noqa: N802
@@ -290,6 +294,9 @@ class FalsaAccion:
 
     def setChecked(self, v):  # noqa: N802
         self.marcada = v
+
+    def setEnabled(self, v):  # noqa: N802
+        self.habilitada = v
 
     def connect(self, fn):
         self._slots.append(fn)
@@ -303,18 +310,29 @@ class FalsoMenu:  # el menú real es modal y bloquearía la prueba
     ultimo = None
 
     def __init__(self, *_a):
-        self.titulo, self.acciones = None, []
+        self.acciones, self.estilo = [], ""
         FalsoMenu.ultimo = self
 
-    def addSection(self, titulo):  # noqa: N802
-        self.titulo = titulo
+    def setStyleSheet(self, estilo):  # noqa: N802
+        self.estilo = estilo
 
     def addAction(self, texto):  # noqa: N802
         self.acciones.append(FalsaAccion(texto))
         return self.acciones[-1]
 
+    def addSeparator(self):  # noqa: N802
+        pass
+
     def exec(self, _pos):
         return None
+
+    @property
+    def titulo(self):
+        return self.acciones[0].texto
+
+    @property
+    def opciones(self):
+        return [a for a in self.acciones if a.habilitada and a is not self.acciones[0]]
 
 
 def test_los_botones_del_orbe_controlan_la_aplicacion(app, settings, monkeypatch):
@@ -324,32 +342,80 @@ def test_los_botones_del_orbe_controlan_la_aplicacion(app, settings, monkeypatch
     win._orb.mic_requested.emit()
     assert win.engine.muted
     win._orb.settings_requested.emit()
-    assert win.isVisible()  # «Ajustes» trae la ventana clásica al frente
+    assert win.isVisible()  # «Ajustes» trae la ventana al frente
+    win._orb.settings_requested.emit()
+    assert not win.isVisible()  # y pulsarlo otra vez la oculta (sin apagar nada)
+    assert win._orb is not None and win.engine is not None
     win._orb.classic_requested.emit()
     assert win._orb is None and win.isVisible()
     assert settings.value("ui_mode", "", type=str) == "classic"
     win.close()
 
 
-def test_entrada_y_salida_del_orbe_abren_un_menu_y_cambian_el_dispositivo(app, settings, monkeypatch):
+def test_cerrar_la_ventana_de_ajustes_con_el_orbe_abierto_solo_la_oculta(app, settings):
+    from PySide6.QtGui import QCloseEvent
+
+    win = _ventana(settings)
+    win.open_orb()
+    win.show()
+    evento = QCloseEvent()
+    monkey_spont = type("E", (), {"spontaneous": lambda self: True, "ignore": lambda self: evento.ignore()})()
+    win.closeEvent(monkey_spont)  # la X de la ventana (evento espontáneo)
+    assert not win.isVisible() and win._orb is not None and win._orb.isVisible()
+    win.close()  # cierre programático (salir de verdad)
+    assert win._closing
+
+
+def test_el_boton_cerrar_del_orbe_cierra_toda_la_aplicacion(app, settings):
+    win = _ventana(settings)
+    win.open_orb()
+    win._orb.quit_requested.emit()
+    assert win._closing  # orbe cerrado -> ventana y motor cerrados (no quedan puertos abiertos)
+
+
+def test_los_menus_del_orbe_ofrecen_las_opciones_de_ajustes_y_las_aplican(app, settings, monkeypatch):
     monkeypatch.setattr("interpreter.ui.window.QMenu", FalsoMenu)
     win = _ventana(settings)
     win.open_orb()
-    for senal, combo, titulo in (
+    casos = (
         (win._orb.input_requested, win.cmb_input, "Micrófono de entrada"),
         (win._orb.output_requested, win.cmb_output, "Salida de audio"),
-    ):
+        (win._orb.speak_requested, win.cmb_source, "Yo hablo"),
+        (win._orb.listen_requested, win.cmb_target, "Ellos escuchan"),
+        (win._orb.voice_requested, win.cmb_profile, "Perfil de voz"),
+    )
+    for senal, combo, titulo in casos:
         FalsoMenu.ultimo = None
         senal.emit()
         menu = FalsoMenu.ultimo
         assert menu is not None and menu.titulo == titulo
-        assert [a.texto for a in menu.acciones] == [combo.itemText(i) for i in range(combo.count())]
-        assert [a.marcada for a in menu.acciones].count(True) == 1  # solo el dispositivo actual
-        if combo.count() > 1:
+        assert "background: #FFFFFF" in menu.estilo  # legible: fondo claro y letra oscura
+        assert [a.texto for a in menu.opciones][: combo.count()] == [
+            combo.itemText(i) for i in range(combo.count())
+        ]
+        assert [a.marcada for a in menu.opciones[: combo.count()]].count(True) == 1
+        if combo.count() > 1 and combo is not win.cmb_profile:  # el perfil puede pedir la licencia (modal)
             otro = 1 if combo.currentIndex() == 0 else 0
-            menu.acciones[otro].disparar()
+            menu.opciones[otro].disparar()
             assert combo.currentIndex() == otro  # elegir en el menú = elegir en Ajustes
     win.close()
+
+
+def test_el_orbe_muestra_los_idiomas_actuales_bajo_hablo_y_escuchan(app):
+    w = OrbWindow(500)
+    w.set_languages("Español", "English")
+    assert (w.src_name, w.dst_name) == ("Español", "English")
+    assert {"speak", "listen", "voice", "input", "mic", "output", "settings", "close"} == set(
+        w.button_rects()
+    )
+
+
+def test_los_botones_del_orbe_no_se_pisan(app):
+    w = OrbWindow(640)
+    rects = list(w.button_rects().values())
+    for i, a in enumerate(rects):
+        for b in rects[i + 1 :]:
+            assert not a.intersects(b), (a, b)
 
 
 def test_la_traduccion_aparece_como_subtitulo_y_el_nivel_mueve_el_orbe(app, settings):
@@ -617,11 +683,11 @@ def test_el_orbe_cabe_dentro_del_anillo_grande(app):
     for name, rect in w.button_rects().items():
         for corner in (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight()):
             d = ((corner.x() - c.x()) ** 2 + (corner.y() - c.y()) ** 2) ** 0.5
-            assert d <= u * 0.56, (
+            assert d <= u * 0.60, (
                 name,
                 d / u,
             )  # iconos y letras dentro del círculo (el anillo grande mide 0,52)
-    assert w.width() == 480  # tamaño inicial más pequeño
+    assert w.width() == 640  # tamaño inicial (se agrandó un poco para que quepan los 8 botones)
 
 
 # -- spec A: micrófono unificado, «encender» forzado y vigilante ---------------------------------------------

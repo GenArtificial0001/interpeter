@@ -398,3 +398,13 @@ distinta del repo (por defecto `%USERPROFILE%\Interpreter`).
   (abajo-izq., silenciar) y `output` (abajo-der., icono de altavoz). `input_requested`/`output_requested` abren un `QMenu`
   junto al cursor (`MainWindow._pick_device`) con los dispositivos del desplegable de Ajustes.
 - Notas de la prueba del instalador: `docs/NOTAS-PRUEBA-INSTALADOR.md`.
+
+## 27. Orbe operable por completo (0.10.0)
+Botones del orbe en arco (`OrbWindow.SLOTS`, grados: 180 izquierda → 0 derecha por abajo; `close` arriba a la derecha):
+`speak` Hablo (+idioma) · `voice` Voz · `input` Entrada · `mic` Micrófono (silenciar) · `output` Salida · `settings`
+Ajustes · `listen` Escuchan (+idioma) · `close` Cerrar. Cada selector abre un `QMenu` (`MainWindow._pick_from`/`_pick_voice`)
+con las opciones del desplegable de Ajustes; elegir una equivale a elegirla allí. El menú contextual del orbe añade
+Invertir idiomas, Pausa para cerrar frase, Anti-eco y Glosario. `theme.MENU_STYLE` da el estilo legible a los menús.
+Ajustes: con el orbe abierto, la X de la ventana solo la oculta (`closeEvent` con `event.spontaneous()`); «Ajustes» del
+orbe alterna mostrar/ocultar; «Cerrar» (o «Salir de Interpreter») cierra todo (motor y puerto 8765 incluidos).
+Tamaño inicial del orbe: 640 px. Los iconos se dibujan con `QPainter` (`_icon_*` en `ui/hud.py`), blancos y lineales.

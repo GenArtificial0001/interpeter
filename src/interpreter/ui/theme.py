@@ -40,7 +40,17 @@ STATE_COLORS = {
     "error": DANGER,
 }
 
-STYLESHEET = f"""
+MENU_STYLE = f"""
+QMenu {{ background: #FFFFFF; color: {TEXT}; border: 1px solid {BORDER_STRONG}; border-radius: 8px; padding: 6px; }}
+QMenu::item {{ background: transparent; color: {TEXT}; padding: 7px 26px 7px 12px; border-radius: 6px; }}
+QMenu::item:selected {{ background: {ACCENT_SOFT}; color: {TEXT}; }}
+QMenu::item:disabled {{ color: {ACCENT}; font-weight: 700; }}
+QMenu::item:checked {{ font-weight: 700; color: {ACCENT}; }}
+QMenu::separator {{ height: 1px; background: {BORDER}; margin: 5px 8px; }}
+"""
+
+STYLESHEET = (
+    f"""
 * {{ font-family: "Segoe UI", "Inter", sans-serif; font-size: 13px; color: {TEXT}; }}
 QMainWindow, QWidget#root {{ background: {BG}; }}
 QLabel {{ background: transparent; }}
@@ -112,3 +122,5 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 QToolTip {{ background: #FFFFFF; color: {TEXT}; border: 1px solid {BORDER_STRONG}; }}
 """
+    + MENU_STYLE
+)

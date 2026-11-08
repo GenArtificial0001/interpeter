@@ -1400,9 +1400,16 @@ class MainWindow(QMainWindow):
             orb = OrbWindow()
             orb.toggle_requested.connect(self._orb_toggle)
             orb.mic_requested.connect(self.btn_mute.toggle)
-            orb.settings_requested.connect(self._show_classic)
-            orb.input_requested.connect(lambda: self._pick_device(self.cmb_input, "Micrófono de entrada"))
-            orb.output_requested.connect(lambda: self._pick_device(self.cmb_output, "Salida de audio"))
+            orb.settings_requested.connect(self._toggle_classic)
+            orb.input_requested.connect(lambda: self._pick_from(self.cmb_input, "Micrófono de entrada"))
+            orb.output_requested.connect(lambda: self._pick_from(self.cmb_output, "Salida de audio"))
+            orb.speak_requested.connect(lambda: self._pick_from(self.cmb_source, "Yo hablo"))
+            orb.listen_requested.connect(lambda: self._pick_from(self.cmb_target, "Ellos escuchan"))
+            orb.voice_requested.connect(self._pick_voice)
+            orb.swap_requested.connect(self._swap_languages)
+            orb.glossary_requested.connect(self._edit_glossary)
+            orb.echo_toggle_requested.connect(self.chk_echo.toggle)
+            orb.pause_requested.connect(lambda: self._pick_from(self.cmb_pause, "Pausa para cerrar frase"))
             orb.classic_requested.connect(self.close_orb)
             orb.closed.connect(self._orb_closed)
             orb.volume_step.connect(self._orb_volume_step)
@@ -1444,9 +1451,9 @@ class MainWindow(QMainWindow):
             self._toggle()
 
     def _orb_closed(self) -> None:
-        """Cerraron el orbe (Alt+F4 o «Salir»): si esta ventana está oculta, se sale de la aplicación."""
+        """Cerraron el orbe (Alt+F4 o «Salir de Interpreter»): se sale de la aplicación completa."""
         self._orb = None
-        if not self.isVisible() and not self._closing:
+        if not self._closing:
             self.close()
 
     def _show_classic(self) -> None:
@@ -1454,16 +1461,45 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def _pick_device(self, combo: QComboBox, title: str) -> None:
-        """Menú junto al cursor con los dispositivos del desplegable (elegir uno = elegirlo en Ajustes)."""
+    def _toggle_classic(self) -> None:
+        """«Ajustes» del orbe: muestra la ventana y, si ya se ve, la oculta (sin apagar nada)."""
+        if self.isVisible():
+            self.hide()
+        else:
+            self._show_classic()
+
+    def _menu(self, title: str) -> QMenu:
         menu = QMenu(self)
-        menu.addSection(title)
+        menu.setStyleSheet(theme.MENU_STYLE)  # sin esto el menú sale con letra negra sobre fondo oscuro
+        menu.addAction(title).setEnabled(False)  # título (se ve en azul, no se puede elegir)
+        menu.addSeparator()
+        return menu
+
+    @staticmethod
+    def _short(text: str, limit: int = 60) -> str:
+        return text if len(text) <= limit else text[: limit - 1] + "…"
+
+    def _add_combo_items(self, menu: QMenu, combo: QComboBox) -> None:
         for i in range(combo.count()):
-            text = combo.itemText(i)
-            action = menu.addAction(text if len(text) <= 60 else text[:57] + "…")
+            action = menu.addAction(self._short(combo.itemText(i)))
             action.setCheckable(True)
             action.setChecked(i == combo.currentIndex())
             action.triggered.connect(lambda _=False, idx=i: combo.setCurrentIndex(idx))
+
+    def _pick_from(self, combo: QComboBox, title: str) -> None:
+        """Menú junto al cursor con las opciones del desplegable (elegir una = elegirla en Ajustes)."""
+        menu = self._menu(title)
+        self._add_combo_items(menu, combo)
+        menu.exec(QCursor.pos())
+
+    def _pick_voice(self) -> None:
+        """Perfil de voz y, si el perfil lo permite, la voz concreta."""
+        menu = self._menu("Perfil de voz")
+        self._add_combo_items(menu, self.cmb_profile)
+        if self.cmb_voice.count() > 1 and self.cmb_voice.isEnabled():
+            menu.addSeparator()
+            menu.addAction("Voz").setEnabled(False)
+            self._add_combo_items(menu, self.cmb_voice)
         menu.exec(QCursor.pos())
 
     def _on_level(self, rms: float) -> None:
@@ -1505,6 +1541,10 @@ class MainWindow(QMainWindow):
         self.log.appendPlainText(f"{who}  {text}")
 
     def closeEvent(self, event) -> None:  # noqa: ANN001, N802
+        if self._orb is not None and not self._closing and event.spontaneous():
+            event.ignore()  # la X de Ajustes con el orbe abierto solo la oculta (como al arrancar)
+            self.hide()
+            return
         self._closing = True
         orb, self._orb = self._orb, None
         if orb is not None:
