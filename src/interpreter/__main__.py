@@ -46,7 +46,15 @@ def main() -> int:
 
     use_local_model_cache()  # antes de importar torch/transformers: fija la caché y el modo sin red
     setup_logging(app_home())
-    logging.getLogger("interpreter").info("Iniciando Interpreter (datos en %s)", app_home())
+    from . import __version__
+    from .audio.webmic import expected_extension_version
+
+    logging.getLogger("interpreter").info(
+        "Iniciando Interpreter %s (extensión del proyecto %s; datos en %s)",
+        __version__,
+        expected_extension_version() or "?",
+        app_home(),
+    )
 
     from PySide6.QtWidgets import QApplication
 
