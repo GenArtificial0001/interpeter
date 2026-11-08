@@ -28,6 +28,28 @@ log = logging.getLogger(__name__)
 
 LANGUAGES = {"es": "Español", "en": "Inglés", "pt": "Portugués", "fr": "Francés"}
 
+# Idiomas que puede HABLAR cada perfil de voz (reconocer y traducir sí funcionan con todos los de LANGUAGES).
+VOICE_LANGS = {
+    "fast": frozenset({"es", "en", "pt", "fr"}),  # MMS-TTS
+    "clone_fast": frozenset({"en", "fr", "pt"}),  # YourTTS no habla español
+    "clone": frozenset({"es", "en", "pt", "fr"}),  # XTTSv2 (lento)
+}
+PROFILE_NAMES = {
+    "fast": "Rápido (voz genérica)",
+    "clone_fast": "Clonado rápido (YourTTS)",
+    "clone": "Clonado alta calidad (XTTSv2, lento)",
+}
+
+
+def voice_problem(profile: str, target: str) -> str | None:
+    """Motivo por el que ``profile`` no puede hablar ``target`` (``None`` si puede), en lenguaje llano."""
+    if target in VOICE_LANGS.get(profile, frozenset()):
+        return None
+    name = LANGUAGES.get(target, target)
+    capable = [PROFILE_NAMES[p] for p in ("fast", "clone") if target in VOICE_LANGS[p]]
+    hint = f" Elige «{capable[0]}»." if capable else ""
+    return f"El perfil «{PROFILE_NAMES.get(profile, profile)}» no habla {name}.{hint}"
+
 
 class EngineState(enum.Enum):
     IDLE = "idle"  # modelos sin cargar
@@ -230,6 +252,9 @@ class Engine:
             cfg = self.config
             if cfg.source == cfg.target:
                 raise EngineError("El idioma de entrada y el de salida no pueden ser el mismo.")
+            problem = voice_problem(cfg.tts_profile, cfg.target)
+            if problem:
+                raise EngineError(problem)
             stt, mt, tts = self._backends
             if hasattr(stt, "glossary"):
                 stt.glossary = self.glossary  # sesgo del reconocimiento y corrección de términos
@@ -317,6 +342,9 @@ class Engine:
     # -- controles en caliente ---------------------------------------------------------------------
 
     def set_target_language(self, language: str) -> None:
+        problem = voice_problem(self.config.tts_profile, language)
+        if problem:
+            raise EngineError(problem)
         self.config.target = language
         if self._pipeline is not None:
             self._pipeline.set_target_language(language)

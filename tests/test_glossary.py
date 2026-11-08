@@ -177,3 +177,22 @@ def test_corrige_un_termino_pegado_a_una_palabra_corta():
 def test_no_toca_palabras_largas_que_empiezan_con_una_preposicion():
     for frase in ("enseñanza deportiva", "alumbrado público", "elefante grande", "ayudante", "oficial"):
         assert glos().correct(frase) == (frase, [])
+
+
+def _stt():
+    from interpreter.stages.backends import WhisperSTT
+
+    stt = WhisperSTT.__new__(
+        WhisperSTT
+    )  # sin cargar el modelo: solo se ejercita la decisión de aceptar/rechazar
+    stt.glossary = Glossary([GlossaryEntry("Ford", ["fort"])])
+    stt.last_reject, stt.last_stats = None, {}
+    return stt
+
+
+def test_el_glosario_corrige_lo_que_se_oye_solo_cuando_se_habla_espanol():
+    """«fort» es un error de oído del español («Ford»), pero en inglés es una palabra normal."""
+    es = _stt()._judge("En un fort.", "es", 0.99, -0.2)
+    assert es == "En un Ford."
+    en = _stt()._judge("We went to the fort.", "en", 0.99, -0.2)
+    assert en == "We went to the fort."

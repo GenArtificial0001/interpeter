@@ -168,8 +168,14 @@ class WhisperSTT(STTBackend):
             steps = self._model.compute_transition_scores(out.sequences, out.scores, normalize_logits=True)
             avg_logprob = float(steps[0].mean()) if steps.numel() else 0.0
             text = str(self._tok.batch_decode(out.sequences, skip_special_tokens=True)[0]).strip()
+        return self._judge(text, language, p_lang, avg_logprob)
+
+    def _judge(self, text: str, language: str, p_lang: float, avg_logprob: float) -> str:
+        """Aplica el glosario y decide si se acepta la frase (vacío = descartada, ver ``last_reject``)."""
         found: list[str] = []
-        if self.glossary is not None and text:
+        # Las variantes del glosario son cómo «oye» Whisper un término hablado en ESPAÑOL («fort» por «Ford»):
+        # al oír inglés u otro idioma no se corrige, o se estropearían palabras normales.
+        if self.glossary is not None and text and language == "es":
             text, found = self.glossary.correct(text)
         self.last_stats = {"p_idioma": p_lang, "logprob": avg_logprob}
         self.last_reject = None

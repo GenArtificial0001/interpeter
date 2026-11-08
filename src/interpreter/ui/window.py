@@ -44,6 +44,7 @@ from ..engine import (
     EngineEvents,
     EngineState,
     check_devices,
+    voice_problem,
 )
 from ..glossary import Glossary
 from ..pipeline import UtteranceMetrics
@@ -646,8 +647,13 @@ class MainWindow(QMainWindow):
     def _check_devices(self) -> None:
         out_name = None if self._output_is_browser() else (self.cmb_output.currentText() or None)
         res = check_devices(self.cmb_input.currentText() or None, out_name)
-        if res.warnings:
-            self._show_warning(" ".join(res.warnings))
+        warnings = list(res.warnings)
+        profile, target = self.cmb_profile.currentData(), self.cmb_target.currentData()
+        problem = voice_problem(profile, target) if profile and target else None
+        if problem:
+            warnings.append(problem)
+        if warnings:
+            self._show_warning(" ".join(warnings))
         else:
             self.lbl_warning.hide()
 
@@ -702,7 +708,15 @@ class MainWindow(QMainWindow):
 
     def _on_target_changed(self) -> None:
         if self.engine.state is EngineState.RUNNING:
-            self.engine.set_target_language(self.cmb_target.currentData())
+            try:
+                self.engine.set_target_language(self.cmb_target.currentData())
+            except EngineError as exc:  # esa voz no habla ese idioma: se mantiene el anterior
+                self.cmb_target.blockSignals(True)
+                self.cmb_target.setCurrentIndex(self.cmb_target.findData(self.engine.config.target))
+                self.cmb_target.blockSignals(False)
+                self._show_warning(str(exc))
+                return
+        self._check_devices()
 
     def _accept_license_if_needed(self, profile: str = "clone") -> bool:
         """Pide una sola vez aceptar la licencia no comercial del modelo del perfil y lo recuerda."""
@@ -730,6 +744,7 @@ class MainWindow(QMainWindow):
             self._set_profile_combo("fast")  # no aceptó: se queda sin clonar
             return
         self._sync_profile_widgets()
+        self._check_devices()
         if self.engine.state in (EngineState.READY, EngineState.ERROR, EngineState.IDLE):
             self.reload_models()
 

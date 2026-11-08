@@ -605,3 +605,41 @@ def test_el_motor_pasa_su_glosario_al_reconocimiento_y_a_la_traduccion():
         assert [e.term for e in stt.glossary.entries] == ["Ford"]
     finally:
         eng.stop()
+
+
+# -- inglés -> español: qué voz habla qué ---------------------------------------------------------------
+
+
+def test_cada_perfil_dice_que_idiomas_habla():
+    from interpreter.engine import voice_problem
+
+    assert voice_problem("fast", "es") is None and voice_problem("clone", "es") is None
+    assert voice_problem("clone_fast", "en") is None and voice_problem("clone_fast", "pt") is None
+    msg = voice_problem("clone_fast", "es")
+    assert "no habla Español" in msg and "Rápido (voz genérica)" in msg  # sugiere una que sí
+
+
+def test_inglés_a_español_funciona_con_la_voz_generica_y_se_rechaza_con_yourtts():
+    eng, _ = make(cfg=EngineConfig(source="en", target="es", tts_profile="fast"))
+    eng.load()
+    eng.start()
+    eng.stop()
+    eng2, _ = make(cfg=EngineConfig(source="en", target="es", tts_profile="clone_fast"))
+    eng2.load()
+    with pytest.raises(EngineError, match="no habla Español"):
+        eng2.start()
+    assert eng2.state is EngineState.READY
+
+
+def test_cambiar_en_caliente_a_un_idioma_que_la_voz_no_habla_se_rechaza():
+    eng, _ = make(cfg=EngineConfig(target="en", tts_profile="clone_fast"))
+    eng.load()
+    eng.start()
+    try:
+        with pytest.raises(EngineError):
+            eng.set_target_language("es")
+        assert eng.config.target == "en"
+        eng.set_target_language("fr")
+        assert eng.config.target == "fr"
+    finally:
+        eng.stop()
