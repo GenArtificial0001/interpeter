@@ -234,7 +234,20 @@ window.__medidor = async function (stream) {
       pico = { rms, freq: (k + d) * ctx.sampleRate / an.fftSize };
     }
   }, 30);
-  return { ahora, pico: () => pico, reiniciar: () => { pico = { rms: 0, freq: 0 }; }, rate: ctx.sampleRate };
+  // Grabadora (escenario 6): guarda lo que llega a la pista, para buscar cortes en una voz real.
+  let rec = null;
+  const sp = ctx.createScriptProcessor(2048, 1, 1);
+  src.connect(sp); sp.connect(mudo);
+  sp.onaudioprocess = (e) => { if (rec) rec.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+  const iniciar = () => { rec = []; return true; };
+  const terminar = () => {
+    const parts = rec || []; rec = null;
+    let n = 0; parts.forEach((q) => { n += q.length; });
+    const out = new Int16Array(n); let o = 0;
+    parts.forEach((q) => { for (let i = 0; i < q.length; i++) out[o++] = Math.max(-32768, Math.min(32767, Math.round(q[i] * 32767))); });
+    return { rate: ctx.sampleRate, samples: Array.from(out) };
+  };
+  return { ahora, pico: () => pico, reiniciar: () => { pico = { rms: 0, freq: 0 }; }, rate: ctx.sampleRate, iniciar, terminar };
 };
 """
 
@@ -307,6 +320,8 @@ window.__lab = {
   },
   pico(i) { return this.meds[i].pico(); },
   reiniciar(i) { this.meds[i].reiniciar(); return true; },
+  iniciarGrab(i) { return this.meds[i].iniciar(); },
+  terminarGrab(i) { return this.meds[i].terminar(); },
 };
 window.__info = () => (window.__interpreterVirtualMicInfo ? window.__interpreterVirtualMicInfo() : null);
 
@@ -399,7 +414,9 @@ class CDP:
         self._id = 0
         self.events: list[dict] = []
 
-    def send(self, method: str, params: dict | None = None, session: str | None = None, timeout: float = 15) -> dict:
+    def send(
+        self, method: str, params: dict | None = None, session: str | None = None, timeout: float = 15
+    ) -> dict:
         self._id += 1
         msg: dict = {"id": self._id, "method": method, "params": params or {}}
         if session:
@@ -494,8 +511,12 @@ def make_test_extension(src: Path, dest: Path, ws_port: int) -> tuple[Path, list
         bg = dest / "background.js"
         texto = bg.read_text(encoding="utf-8")
         if texto.count(f"ws://127.0.0.1:{DEFAULT_PORT}") != 1:
-            raise RuntimeError("background.js ya no tiene la forma esperada (una sola URL ws://127.0.0.1:8765)")
-        bg.write_text(texto.replace(f"ws://127.0.0.1:{DEFAULT_PORT}", f"ws://127.0.0.1:{ws_port}"), encoding="utf-8")
+            raise RuntimeError(
+                "background.js ya no tiene la forma esperada (una sola URL ws://127.0.0.1:8765)"
+            )
+        bg.write_text(
+            texto.replace(f"ws://127.0.0.1:{DEFAULT_PORT}", f"ws://127.0.0.1:{ws_port}"), encoding="utf-8"
+        )
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return dest, malos
 
@@ -601,7 +622,9 @@ def open_tab(lab: Lab, url: str) -> Tab:
     tab = Tab(cdp, tid, sess)
     cdp.send("Runtime.enable", session=sess)
     cdp.send("Page.enable", session=sess)
-    with contextlib.suppress(Exception):  # que la pestaña se comporte como enfocada (sin estrangular temporizadores)
+    with contextlib.suppress(
+        Exception
+    ):  # que la pestaña se comporte como enfocada (sin estrangular temporizadores)
         cdp.send("Emulation.setFocusEmulationEnabled", {"enabled": True}, session=sess)
     for permiso, valor in (("audioCapture", "denied"), ("videoCapture", "granted")):
         with contextlib.suppress(Exception):
@@ -625,6 +648,7 @@ def open_tab(lab: Lab, url: str) -> Tab:
 
 def esperar_puente(tab: Tab, timeout: float = 20) -> dict | None:
     """Espera a que el puente de la pestaña (content script) esté conectado al service worker."""
+
     def conectado() -> bool:
         try:
             return bool((tab.ev("__info()") or {}).get("conectado"))
@@ -633,7 +657,9 @@ def esperar_puente(tab: Tab, timeout: float = 20) -> dict | None:
 
     t0 = time.time()
     ok = wait_for(conectado, timeout)
-    log(f"    puente de la pestaña {'conectado' if ok else 'SIN conectar'} a los {time.time() - t0:.2f} s de cargar")
+    log(
+        f"    puente de la pestaña {'conectado' if ok else 'SIN conectar'} a los {time.time() - t0:.2f} s de cargar"
+    )
     return tab.ev("__info()")  # type: ignore[return-value]
 
 
@@ -722,7 +748,11 @@ def esc1_restricciones_meet(lab: Lab) -> None:
         }
         r = tab.ev(f"__lab.pedirSeguro({json.dumps(restricciones)}, true)")
         if r.get("error"):  # type: ignore[union-attr]
-            rep.add("(1a) Meet: getUserMedia(audio+vídeo con restricciones) devuelve audio virtual y vídeo", False, f"error={r['error']}")  # type: ignore[index]
+            rep.add(
+                "(1a) Meet: getUserMedia(audio+vídeo con restricciones) devuelve audio virtual y vídeo",
+                False,
+                f"error={r['error']}",
+            )  # type: ignore[index]
             return
         audio, video = r["audio"], r["video"]  # type: ignore[index]
         ok_a = (
@@ -757,7 +787,11 @@ def esc1_restricciones_meet(lab: Lab) -> None:
             f"llamadas reales={reales}, pistas de audio reales devueltas={espia['audioReal']}",  # type: ignore[index]
         )
         p = tono_medido(lab, tab, r["i"])  # type: ignore[index]
-        rep.add("(1d) Meet: el tono llega a la pista de audio virtual del stream audio+vídeo", suena(p), fmt_pico(p))
+        rep.add(
+            "(1d) Meet: el tono llega a la pista de audio virtual del stream audio+vídeo",
+            suena(p),
+            fmt_pico(p),
+        )
     finally:
         tab.close()
 
@@ -860,7 +894,10 @@ def esc3_iframes(lab: Lab) -> None:
             ("(3c)", "mismo", "src", lab.frame_url, "iframe de la misma origen"),
             ("(3d)", "otro", "src", lab.xframe_url, "iframe de OTRO origen (localhost)"),
         ]
-        creados = {n: tab.ev(f"__crearFrame({json.dumps(n)}, {json.dumps(t)}, {json.dumps(u)})") for _, n, t, u, _ in casos}
+        creados = {
+            n: tab.ev(f"__crearFrame({json.dumps(n)}, {json.dumps(t)}, {json.dumps(u)})")
+            for _, n, t, u, _ in casos
+        }
 
         def estado_frame(n: str) -> dict | None:
             try:
@@ -870,7 +907,11 @@ def esc3_iframes(lab: Lab) -> None:
 
         resultados: dict[str, dict | None] = {}
         for _, n, *_ in casos:
-            wait_for(lambda n=n: (lambda r: bool(r and (r.get("listo") or r.get("error"))))(estado_frame(n)), 15, 0.2)
+            wait_for(
+                lambda n=n: (lambda r: bool(r and (r.get("listo") or r.get("error"))))(estado_frame(n)),
+                15,
+                0.2,
+            )
             resultados[n] = estado_frame(n)
 
         def puente_frame(n: str) -> bool:
@@ -952,7 +993,13 @@ def esc4_cambio_de_dispositivo(lab: Lab) -> None:
             for forma in ({"exact": ident}, ident):
                 resp = tab.ev(f"__lab.pedirSeguro({json.dumps({'audio': {'deviceId': forma}})}, false)")
                 etiqueta = None if resp.get("error") else resp["audio"][0]["label"]  # type: ignore[union-attr,index]
-                detalle.append((ident[:18], "exact" if isinstance(forma, dict) else "plano", resp.get("error") or etiqueta))  # type: ignore[union-attr]
+                detalle.append(
+                    (
+                        ident[:18],
+                        "exact" if isinstance(forma, dict) else "plano",
+                        resp.get("error") or etiqueta,
+                    )
+                )  # type: ignore[union-attr]
                 ok_c &= etiqueta == VIRTUAL_LABEL
         espia = tab.ev("window.__espia")
         ok_c &= espia["llamadasReales"] == 0 and espia["audioReal"] == 0  # type: ignore[index]
@@ -977,14 +1024,16 @@ def esc5_dos_pestanas(lab: Lab) -> None:
         if ra.get("error"):  # type: ignore[union-attr]
             rep.add("(5a) pestaña con micrófono", False, f"error={ra['error']}")  # type: ignore[index]
             return
-        wait_for(lambda: all(t == 2 for t in lab.server._clients.values()), 5)  # el servicio ya ve las 2 pestañas
+        wait_for(
+            lambda: all(t == 2 for t in lab.server._clients.values()), 5
+        )  # el servicio ya ve las 2 pestañas
         tabs_vistas = list(lab.server._clients.values())
         with contextlib.suppress(Exception):
             lab.cdp.send("Target.activateTarget", {"targetId": a.tid})
         a.ev(f"__lab.reiniciar({ra['i']})")  # type: ignore[index]
         antes_b = b.ev("__info()")
         entregado = enviar_tono(lab, a)
-        wait_for(lambda: b.ev('__info()')['trozosDescartados'] > antes_b['trozosDescartados'], 5)  # type: ignore[index]
+        wait_for(lambda: b.ev("__info()")["trozosDescartados"] > antes_b["trozosDescartados"], 5)  # type: ignore[index]
         pico_a = a.ev(f"__lab.pico({ra['i']})")  # type: ignore[index]
         info_a = a.ev("__info()")
         info_b = b.ev("__info()")
@@ -995,7 +1044,9 @@ def esc5_dos_pestanas(lab: Lab) -> None:
         )
         rep.add(
             "(5b) pestaña SIN micrófono (misma página): no reproduce nada",
-            info_b["trozosRecibidos"] == 0 and info_b["pistasVivas"] == 0 and info_b["audioContext"] == "sin crear",  # type: ignore[index]
+            info_b["trozosRecibidos"] == 0
+            and info_b["pistasVivas"] == 0
+            and info_b["audioContext"] == "sin crear",  # type: ignore[index]
             f"antes={antes_b}, después={info_b}",
         )
         rep.add(
@@ -1008,6 +1059,97 @@ def esc5_dos_pestanas(lab: Lab) -> None:
         a.close()
         if b:
             b.close()
+
+
+CLIP_VOZ = Path(__file__).resolve().parents[1] / "data" / "muestras_voz" / "en_yourtts_CLON_mi_voz.wav"
+
+
+def analizar_continuidad(ref: np.ndarray, ref_rate: int, rec: np.ndarray, rec_rate: int) -> dict:
+    """Compara la voz enviada con la que llegó a la página: cortes que NO estaban en la original.
+
+    Se alinean las envolventes (RMS cada 5 ms) y se cuentan los tramos donde la original suena (RMS > 0,01) y lo
+    recibido casi no (< 10 % de la original). Devuelve milisegundos de hueco total, hueco más largo y correlación.
+    """
+    from math import gcd
+
+    from scipy.signal import resample_poly
+
+    g = gcd(ref_rate, rec_rate)
+    ref_r = resample_poly(ref, rec_rate // g, ref_rate // g).astype(np.float32)
+    frame = max(1, int(rec_rate * 0.005))
+
+    def env(x: np.ndarray) -> np.ndarray:
+        n = len(x) // frame
+        return np.sqrt((x[: n * frame].reshape(n, frame) ** 2).mean(axis=1))
+
+    e_ref, e_rec = env(ref_r), env(rec)
+    if len(e_rec) < len(e_ref) or e_ref.max() == 0:
+        return {"error": f"grabación corta ({len(e_rec)} < {len(e_ref)} tramos de 5 ms)"}
+    a = (e_ref - e_ref.mean()) / (e_ref.std() + 1e-9)
+    best, lag = -2.0, 0
+    for k in range(0, len(e_rec) - len(e_ref) + 1):
+        w = e_rec[k : k + len(e_ref)]
+        c = float(np.dot(a, (w - w.mean()) / (w.std() + 1e-9)) / len(a))
+        if c > best:
+            best, lag = c, k
+    w = e_rec[lag : lag + len(e_ref)]
+    suena = e_ref > 0.01
+    hueco = suena & (w < 0.1 * e_ref)
+    # racha más larga de tramos consecutivos con hueco
+    mejor = racha = 0
+    for h in hueco:
+        racha = racha + 1 if h else 0
+        mejor = max(mejor, racha)
+    return {
+        "correlacion": round(best, 3),
+        "retardo_ms": round(lag * 5),
+        "hueco_total_ms": int(hueco.sum() * 5),
+        "hueco_max_ms": mejor * 5,
+        "tramos_con_voz_ms": int(suena.sum() * 5),
+        "ganancia": round(float(w[suena].mean() / e_ref[suena].mean()), 3) if suena.any() else None,
+    }
+
+
+def esc6_continuidad(lab: Lab) -> None:
+    """Una frase de voz REAL (YourTTS clonado, la misma que Interpreter envía) llega sin cortes a la página."""
+    import wave
+
+    rep = lab.rep
+    if not CLIP_VOZ.exists():
+        rep.add("(6) continuidad con voz real", False, f"falta la muestra {CLIP_VOZ}")
+        return
+    with wave.open(str(CLIP_VOZ)) as w:
+        rate = w.getframerate()
+        ref = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768
+    tab = open_tab(lab, lab.lab_url)
+    try:
+        esperar_puente(tab)
+        r = tab.ev("__lab.pedirSeguro({audio:true}, true)")
+        if r.get("error"):  # type: ignore[union-attr]
+            rep.add("(6) continuidad con voz real", False, f"error={r['error']}")  # type: ignore[index]
+            return
+        i = r["i"]  # type: ignore[index]
+        resultados = []
+        for repeticion in range(3):
+            wait_for(lambda: lab.server.receivers >= 1, 5, 0.02)
+            tab.ev(f"__lab.iniciarGrab({i})")
+            entregado = lab.server.push(ref, rate)  # un solo trozo, como hace YourTTS en la app
+            time.sleep(len(ref) / rate + 1.5)
+            data = tab.ev(f"__lab.terminarGrab({i})", timeout=30)
+            rec = np.asarray(data["samples"], dtype=np.float32) / 32767  # type: ignore[index]
+            res = analizar_continuidad(ref, rate, rec, int(data["rate"]))  # type: ignore[index]
+            res["entregado"] = entregado
+            resultados.append(res)
+            lab.server.flush()
+            time.sleep(0.5)
+        malos = [x for x in resultados if "error" in x or x["hueco_total_ms"] > 20 or x["correlacion"] < 0.8]
+        rep.add(
+            "(6) voz real (YourTTS) llega sin cortes a la página (3 repeticiones)",
+            not malos,
+            f"resultados={resultados}",
+        )
+    finally:
+        tab.close()
 
 
 # -- Una ejecución contra un navegador ---------------------------------------------------------------
@@ -1083,13 +1225,17 @@ def run_browser(
             # Se exige el ID de NUESTRA extensión (fijado por la clave del manifest): Edge/Chrome recientes traen
             # extensiones propias con un background.js (p. ej. la de Gemini) que no son la que se prueba.
             for t in cdp.send("Target.getTargets")["targetInfos"]:
-                if t["type"] == "service_worker" and t["url"].startswith(f"chrome-extension://{EXTENSION_ID}/background.js"):
+                if t["type"] == "service_worker" and t["url"].startswith(
+                    f"chrome-extension://{EXTENSION_ID}/background.js"
+                ):
                     return t
             return None
 
         if not wait_for(lambda: sw_target() is not None, 8):
             # Plan B: cargar vía CDP (solo funciona si el navegador se lanzó con --enable-unsafe-extension-debugging)
-            rep.notes.append("El service worker no apareció con --load-extension; se intenta Extensions.loadUnpacked.")
+            rep.notes.append(
+                "El service worker no apareció con --load-extension; se intenta Extensions.loadUnpacked."
+            )
             try:
                 cdp.send("Extensions.loadUnpacked", {"path": str(ext_dir)})
             except Exception as e:  # noqa: BLE001
@@ -1112,7 +1258,9 @@ def run_browser(
         )
 
         # Sesión sobre el service worker para recoger sus errores
-        sw_sess = cdp.send("Target.attachToTarget", {"targetId": sw["targetId"], "flatten": True})["sessionId"]
+        sw_sess = cdp.send("Target.attachToTarget", {"targetId": sw["targetId"], "flatten": True})[
+            "sessionId"
+        ]
         with contextlib.suppress(Exception):
             cdp.send("Runtime.enable", session=sw_sess)
         # Diagnóstico (solo observa): registra cuándo se conectan/desconectan los puertos de las pestañas.
@@ -1138,7 +1286,15 @@ def run_browser(
         cdp.send("Page.addScriptToEvaluateOnNewDocument", {"source": ESPIA_JS}, session=sess)
         cdp.send("Page.navigate", {"url": page_url}, session=sess)
 
-        ready = wait_for(lambda: bool(cdp.evaluate("!!(window.__resultado && (window.__resultado.listo || window.__resultado.error))", sess)), 15, 0.25)
+        ready = wait_for(
+            lambda: bool(
+                cdp.evaluate(
+                    "!!(window.__resultado && (window.__resultado.listo || window.__resultado.error))", sess
+                )
+            ),
+            15,
+            0.25,
+        )
         res = cdp.evaluate("JSON.stringify(window.__resultado)", sess)
         res = json.loads(res) if res else {}
         if not ready or res.get("error"):
@@ -1151,7 +1307,9 @@ def run_browser(
         rep.add("extensión conectada al WebSocket (server.clients >= 1)", got_ws, f"clients={server.clients}")
         if not got_ws:
             return rep
-        got_bridge = wait_for(lambda: bool((cdp.evaluate("window.__estado()", sess) or {}).get("conectado")), 10)
+        got_bridge = wait_for(
+            lambda: bool((cdp.evaluate("window.__estado()", sess) or {}).get("conectado")), 10
+        )
         estado = cdp.evaluate("window.__estado()", sess)
         rep.add("pestaña recibe el estado «conectado» del puente", got_bridge, f"estado={estado}")
         if not got_bridge:
@@ -1159,7 +1317,11 @@ def run_browser(
 
         # (c) enumerateDevices
         labels = [d["label"] for d in res["dispositivos"]]
-        rep.add("(c) enumerateDevices incluye el dispositivo virtual", VIRTUAL_LABEL in labels, f"dispositivos={labels}")
+        rep.add(
+            "(c) enumerateDevices incluye el dispositivo virtual",
+            VIRTUAL_LABEL in labels,
+            f"dispositivos={labels}",
+        )
 
         # (a) silencio antes del tono
         cdp.evaluate("window.__reiniciar()", sess)
@@ -1284,15 +1446,16 @@ def run_browser(
         escenario(lab, "3) iframes (srcdoc, about:blank, misma y otra origen)", esc3_iframes)
         escenario(lab, "4) cambio de dispositivo por deviceId", esc4_cambio_de_dispositivo)
         escenario(lab, "5) dos pestañas", esc5_dos_pestanas)
+        escenario(lab, "6) continuidad con voz real", esc6_continuidad)
 
         # Errores del service worker / de la página
         cdp.pump(0.2)
-        errs = [
-            e
-            for e in cdp.events
-            if e.get("method") in ("Runtime.exceptionThrown",)
-        ]
-        rep.add("sin excepciones JS en extensión/página", not errs, f"{len(errs)} excepción(es)" + (f": {errs[0]}" if errs else ""))
+        errs = [e for e in cdp.events if e.get("method") in ("Runtime.exceptionThrown",)]
+        rep.add(
+            "sin excepciones JS en extensión/página",
+            not errs,
+            f"{len(errs)} excepción(es)" + (f": {errs[0]}" if errs else ""),
+        )
         return rep
     finally:
         with contextlib.suppress(Exception):
@@ -1332,7 +1495,9 @@ def main() -> int:
             except OSError:
                 print(f"El puerto {DEFAULT_PORT} está ocupado (¿Interpreter en marcha?). Ciérralo y repite.")
                 return 2
-        log(f"AVISO: puerto real {DEFAULT_PORT}: tu navegador habitual con la extensión puede recibir los tonos.")
+        log(
+            f"AVISO: puerto real {DEFAULT_PORT}: tu navegador habitual con la extensión puede recibir los tonos."
+        )
 
     http_port = free_port()
     httpd = ThreadingHTTPServer(("127.0.0.1", http_port), _Handler)
@@ -1341,7 +1506,9 @@ def main() -> int:
     log(f"Página de prueba: {page_url} (CSP: {CSP}); WebSocket de la prueba en el puerto {ws_port}")
 
     tmp = Path(tempfile.mkdtemp(prefix="interpreter-ext-"))
-    ext_dir, manifest_malos = make_test_extension(Path(opts.extension_dir).resolve(), tmp / "extension", ws_port)
+    ext_dir, manifest_malos = make_test_extension(
+        Path(opts.extension_dir).resolve(), tmp / "extension", ws_port
+    )
     names = ["edge", "chrome"] if opts.browser == "auto" else [opts.browser]
     final: Report | None = None
     try:
@@ -1350,7 +1517,9 @@ def main() -> int:
             if not exe.exists():
                 log(f"{name}: no instalado ({exe})")
                 continue
-            rep = run_browser(name, exe, page_url, ext_dir, tmp, opts.headed, opts.keep, ws_port, manifest_malos)
+            rep = run_browser(
+                name, exe, page_url, ext_dir, tmp, opts.headed, opts.keep, ws_port, manifest_malos
+            )
             for n in rep.notes:
                 log(f"  nota: {n}")
             final = rep
@@ -1370,7 +1539,9 @@ def main() -> int:
         print(f"RESULTADO: BLOQUEADO. {final.browser} no cargó la extensión: {'; '.join(final.notes)}")
         return 2
     cont = final.counted
-    print(f"RESULTADO en {final.browser}: {'PASA' if final.passed else 'FALLA'} ({sum(c.ok for c in cont)}/{len(cont)} comprobaciones)")
+    print(
+        f"RESULTADO en {final.browser}: {'PASA' if final.passed else 'FALLA'} ({sum(c.ok for c in cont)}/{len(cont)} comprobaciones)"
+    )
     for c in final.checks:
         marca = ("INFO " if c.ok else "AVISO") if c.info else ("OK   " if c.ok else "FALLA")
         print(f"  {marca} {c.name}")
