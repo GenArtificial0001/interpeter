@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "interpreter"
-version = "0.2.0"
+version = "0.2.1"
 description = "Intérprete de voz local en tiempo real (español -> inglés/portugués/francés) con voz clonada"
 requires-python = ">=3.11"
 dependencies = [
@@ -28,6 +28,7 @@ ml = [
     "onnxruntime>=1.17",
     "huggingface-hub>=0.25",
     "librosa>=0.10",
+    "num2words>=0.5",  # las cifras se pronuncian como palabras (la voz sintética no lee «1, 2, 3»)
 ]
 # Voz clonada (YourTTS y XTTSv2). coqui-tts exige estas versiones: con torch>=2.8 o transformers>=5 no arranca.
 clone = [

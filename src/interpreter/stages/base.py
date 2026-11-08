@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from ..messages import AudioChunk, SpeechSegment, Transcript, Translation
+from ..numbers import spell_numbers
 
 
 class STTBackend(ABC):
@@ -128,6 +129,7 @@ class TTSStage:
     def process(self, tl: Translation) -> Iterator[AudioChunk]:
         first = True
         spoken = self.glossary.speakable(tl.text) if self.glossary else tl.text  # SAP -> «S A P»
+        spoken = spell_numbers(spoken, tl.target_language)  # 1, 2, 3 -> one, two, three: la voz no lee cifras
         for audio in self.backend.synthesize(spoken, tl.target_language):
             if first:
                 tl.timings.tts_first_audio = tl.timings.e2e()
