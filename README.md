@@ -97,6 +97,13 @@ En el perfil «Rápido (voz genérica)» el selector **Voz** ofrece varias voces
 salida (la voz de siempre es de hombre). Incluye voces de Windows si las tienes instaladas (p. ej. Sabina y Helena en
 español, Zira en inglés). Cada idioma recuerda la última voz elegida.
 
+## Modo orbe
+
+Botón **Modo orbe** en la ventana principal: una interfaz alternativa, transparente y sin marco (anillos, barras y un orbe
+que cambia con el estado; **Ajustes**, **Historial** y **Micrófono** dentro del anillo). Clic en el orbe inicia o detiene;
+clic derecho → «Volver a la ventana clásica», «Siempre visible» o «Salir»; rueda del ratón cambia el tamaño. La ventana
+clásica sigue siendo la predeterminada.
+
 ## Eco y ruido
 
 Whisper puede «inventar» frases sobre ruido o sobre la propia voz traducida (p. ej. «¡Suscríbete!»). La

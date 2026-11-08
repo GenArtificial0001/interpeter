@@ -1,0 +1,528 @@
+"""«Orbe»: la interfaz alternativa de Interpreter, una ventana SIN marco y con fondo transparente.
+
+Es opcional y vive aparte de la ventana clásica (``window.py``): usa el mismo motor y no cambia el audio.
+Lo que no se dibuja es transparente (Windows deja pasar los clics al escritorio en esos píxeles).
+
+Se dibuja con ``QPainter`` (sin imágenes ni desenfoques, que gastarían la CPU que necesitan los modelos):
+anillos con brillo, marcas, barras de ecualizador y un orbe central cuyo punto cambia de color con el
+estado. La animación va a ~30 fps con voz y a ~8 fps en reposo, y se detiene si la ventana está oculta.
+"""
+
+from __future__ import annotations
+
+import math
+import random
+import time
+from collections import deque
+from collections.abc import Callable
+from enum import Enum
+
+from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QConicalGradient,
+    QFont,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRadialGradient,
+)
+from PySide6.QtWidgets import QMenu, QWidget
+
+SIZE = 560
+BARS = 96
+TICKS = 90
+
+
+class Mood(Enum):
+    """Qué muestra el orbe (independiente de ``EngineState`` para poder probarlo sin motor)."""
+
+    LOADING = "loading"
+    READY = "ready"
+    RUNNING = "running"
+    MUTED = "muted"
+    ERROR = "error"
+
+
+# Color del punto central y del brillo según el estado: (punto, acento)
+# Nombre de cada idioma en el propio idioma (como en el diseño: «Español → English»)
+NATIVE = {"es": "Español", "en": "English", "pt": "Português", "fr": "Français"}
+
+PALETTE = {
+    Mood.LOADING: (QColor("#f5a623"), QColor("#5aa9ff")),
+    Mood.READY: (QColor("#9fb4d6"), QColor("#4a90e2")),
+    Mood.RUNNING: (QColor("#ff2d55"), QColor("#35c8ff")),
+    Mood.MUTED: (QColor("#6b7280"), QColor("#3b5b86")),
+    Mood.ERROR: (QColor("#ff453a"), QColor("#c0392b")),
+}
+TITLES = {
+    Mood.LOADING: "CARGANDO MODELOS…",
+    Mood.READY: "LISTO",
+    Mood.RUNNING: "INTERPRETANDO…",
+    Mood.MUTED: "SILENCIADO",
+    Mood.ERROR: "ERROR",
+}
+
+
+def orb_icon(size: int = 64) -> QIcon:
+    """Ícono de la aplicación (el orbe), para la barra de tareas."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    c = QPointF(size / 2, size / 2)
+    g = QRadialGradient(c, size * 0.48)
+    g.setColorAt(0.0, QColor("#0b1f66"))
+    g.setColorAt(0.55, QColor("#1f5bff"))
+    g.setColorAt(1.0, QColor("#7fd0ff"))
+    p.setBrush(QBrush(g))
+    p.setPen(QPen(QColor("#bfe6ff"), size * 0.04))
+    p.drawEllipse(c, size * 0.42, size * 0.42)
+    p.setBrush(QColor("#ff2d55"))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawEllipse(c, size * 0.06, size * 0.06)
+    p.end()
+    return QIcon(pm)
+
+
+class OrbWindow(QWidget):
+    """Ventana flotante sin marco. Emite señales; quien la usa decide qué hacer (ver ``MainWindow``)."""
+
+    toggle_requested = Signal()  # clic en el orbe: iniciar / detener
+    mic_requested = Signal()  # clic en «Micrófono»: silenciar / reanudar
+    settings_requested = Signal()
+    history_requested = Signal()
+    classic_requested = Signal()  # menú: volver a la ventana clásica
+    closed = Signal()  # la ventana se cerró (Alt+F4 o menú «Salir»)
+
+    BUTTONS = ("settings", "history", "mic")  # orden de hit-test
+
+    def __init__(self, size: int = SIZE, now: Callable[[], float] = time.monotonic) -> None:
+        super().__init__()
+        self.setWindowTitle("Interpreter")
+        self.setWindowIcon(orb_icon())
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setMinimumSize(320, 320)
+        self.resize(size, size)
+        self._now = now
+        self.mood = Mood.LOADING
+        self.src_name, self.dst_name = "Español", "English"
+        self.muted = False
+        self.caption = ""
+        self._phase = 0.0
+        self._last_tick = now()
+        self._level = 0.0  # nivel suavizado del micrófono (0..1)
+        self._speak_until = 0.0
+        self._history: deque[float] = deque(maxlen=BARS)
+        rng = random.Random(7)  # perfil fijo por barra: la voz real modula la altura, no inventa movimiento
+        self._profile = [0.35 + 0.65 * rng.random() for _ in range(BARS)]
+        self._bars = [0.0] * BARS
+        self._press_pos: QPointF | None = None
+        self._cache: dict[str, tuple[tuple, QPixmap]] = {}  # capas ya dibujadas (ver _layer)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(120)
+
+    # -- API que usa MainWindow -----------------------------------------------------------------------------
+
+    def set_mood(self, mood: Mood) -> None:
+        self.mood = mood
+        self.update()
+
+    def set_languages(self, source: str, target: str) -> None:
+        self.src_name, self.dst_name = source, target
+        self.update()
+
+    def push_level(self, rms: float) -> None:
+        """Nivel del micrófono (RMS 0..~0,3): mueve las barras. Barato: solo guarda el valor."""
+        self._level = max(self._level * 0.6, min(1.0, rms * 6.0))
+
+    def speak(self, seconds: float) -> None:
+        """La traducción está sonando durante ~``seconds``: el orbe lo muestra con un pulso."""
+        self._speak_until = self._now() + max(0.3, seconds)
+
+    def set_caption(self, text: str) -> None:
+        self.caption = text.strip()[:90]
+        self.update()
+
+    # -- geometría -------------------------------------------------------------
+
+    def _center(self) -> QPointF:
+        return QPointF(self.width() / 2, self.height() / 2)
+
+    def _unit(self) -> float:
+        """Radio de referencia: el mayor círculo que cabe con margen para las barras."""
+        return min(self.width(), self.height()) / 2
+
+    def button_rects(self) -> dict[str, QRectF]:
+        u, c = self._unit(), self._center()
+        w, h = u * 0.27, u * 0.24
+        return {  # dentro de los anillos, a los lados y debajo del orbe (como en el diseño)
+            "settings": QRectF(c.x() - u * 0.41 - w / 2, c.y() - h / 2, w, h),
+            "history": QRectF(c.x() + u * 0.41 - w / 2, c.y() - h / 2, w, h),
+            "mic": QRectF(c.x() - w / 2, c.y() + u * 0.40, w, h),
+        }
+
+    def hit_test(self, pos: QPointF) -> str:
+        """``orb`` | ``settings`` | ``history`` | ``mic`` | ``drag`` (resto del círculo) | ``none``."""
+        c, u = self._center(), self._unit()
+        d = math.hypot(pos.x() - c.x(), pos.y() - c.y())
+        if d <= u * 0.17:
+            return "orb"
+        for name, rect in self.button_rects().items():
+            if rect.contains(pos):
+                return name
+        return "drag" if d <= u * 0.98 else "none"
+
+    # -- animación -------------------------------------------------------------
+
+    def _active(self) -> bool:
+        return self.mood is Mood.RUNNING and self._level > 0.02 or self._now() < self._speak_until
+
+    def _tick(self) -> None:
+        if not self.isVisible():
+            return
+        now = self._now()
+        dt = max(0.0, min(0.5, now - self._last_tick))
+        self._last_tick = now
+        active = self._active()
+        self._phase = (self._phase + dt * (0.5 if active else 0.12)) % 1.0
+        self._history.append(self._level)
+        speaking = now < self._speak_until
+        for i in range(BARS):
+            lvl = self._level if self.mood is Mood.RUNNING else 0.0
+            if speaking:
+                lvl = max(lvl, 0.55 + 0.25 * math.sin(self._phase * 40 + i * 0.7))
+            target = lvl * self._profile[i]
+            self._bars[i] += (target - self._bars[i]) * (0.55 if target > self._bars[i] else 0.25)
+        self._level *= 0.7
+        self._timer.setInterval(33 if active or any(b > 0.03 for b in self._bars) else 120)
+        self.update()
+
+    # -- dibujo ----------------------------------------------------------------
+
+    def _layer(self, name: str, key: tuple, paint: Callable[[QPainter], None]) -> QPixmap:
+        """Capa ya dibujada (se rehace solo si cambia ``key``): lo costoso no se repite en cada cuadro."""
+        cached = self._cache.get(name)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        dpr = self.devicePixelRatioF()
+        pm = QPixmap(int(self.width() * dpr), int(self.height() * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        paint(p)
+        p.end()
+        self._cache[name] = (key, pm)
+        return pm
+
+    def paintEvent(self, _event) -> None:  # noqa: ANN001, N802
+        dot, accent = PALETTE[self.mood]
+        c, u = self._center(), self._unit()
+        dim = 1.0 if self.mood in (Mood.RUNNING, Mood.LOADING) else 0.7
+        geom = (self.width(), self.height(), self.devicePixelRatioF(), self.mood)
+
+        def static(q: QPainter) -> None:
+            self._draw_glow(q, c, u, accent, dim)
+            self._draw_thin_rings(q, c, u, accent, dim)
+            self._draw_ticks(q, c, u, accent, dim, lit=None)
+            self._draw_texts(q, c, u, accent)
+            self._draw_buttons(q, accent)
+
+        text_key = (self.src_name, self.dst_name, self.muted, self.caption)
+        base = self._layer("static", (*geom, *text_key), static)
+        arc = self._layer("arc", geom, lambda q: self._draw_arc(q, c, u, accent, dim))
+        orb = self._layer("orb", geom, lambda q: self._draw_orb(q, c, u, accent, dot))
+
+        p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        p.fillRect(self.rect(), Qt.GlobalColor.transparent)  # todo transparente: lo que no se dibuja no se ve
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        p.drawPixmap(0, 0, base)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.save()  # el anillo brillante gira: se gira la capa ya dibujada
+        p.translate(c)
+        p.rotate(-self._phase * 360.0)
+        p.translate(-c)
+        p.drawPixmap(0, 0, arc)
+        p.restore()
+        self._draw_ticks(p, c, u, accent, dim, lit=int(self._phase * TICKS))
+        self._draw_bars(p, c, u, accent, dim)
+        pulse = 1.0 + (0.04 * math.sin(self._phase * 2 * math.pi) if self.mood is Mood.RUNNING else 0.0)
+        if self._now() < self._speak_until:
+            pulse += 0.05
+        p.save()  # el orbe «respira»: se escala la capa ya dibujada alrededor del centro
+        p.translate(c)
+        p.scale(pulse, pulse)
+        p.translate(-c)
+        p.drawPixmap(0, 0, orb)
+        p.restore()
+        p.end()
+
+    def _draw_glow(self, p: QPainter, c: QPointF, u: float, accent: QColor, dim: float) -> None:
+        g = QRadialGradient(c, u * 0.95)
+        a = QColor(accent)
+        a.setAlphaF(0.20 * dim)
+        g.setColorAt(0.0, a)
+        a2 = QColor(accent)
+        a2.setAlphaF(0.07 * dim)
+        g.setColorAt(0.55, a2)
+        g.setColorAt(1.0, QColor(0, 0, 0, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(g))
+        p.drawEllipse(c, u * 0.95, u * 0.95)
+
+    def _draw_thin_rings(self, p: QPainter, c: QPointF, u: float, accent: QColor, dim: float) -> None:
+        for r, alpha, width in ((u * 0.33, 0.35, 1.2), (u * 0.36, 0.25, 1.0)):
+            col = QColor(accent)
+            col.setAlphaF(alpha * dim)
+            p.setPen(QPen(col, width))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(c, r, r)
+
+    def _draw_arc(self, p: QPainter, c: QPointF, u: float, accent: QColor, dim: float) -> None:
+        """El gran anillo brillante abierto, dibujado en reposo (ángulo 0); gira al pintarlo."""
+        r = u * 0.52
+        rect = QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r)
+        start = -60 * 16
+        for width, alpha in ((16, 0.10), (10, 0.18), (6, 0.35), (3, 0.9)):
+            grad = QConicalGradient(c, 60.0)
+            bright = QColor("#e8f8ff")
+            bright.setAlphaF(min(1.0, alpha * 1.4) * dim)
+            tail = QColor(accent)
+            tail.setAlphaF(0.0)
+            mid = QColor(accent)
+            mid.setAlphaF(alpha * dim)
+            grad.setColorAt(0.0, bright)
+            grad.setColorAt(0.45, mid)
+            grad.setColorAt(0.75, tail)
+            grad.setColorAt(1.0, bright)
+            pen = QPen(QBrush(grad), width)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.drawArc(rect, start, 270 * 16)
+
+    def _draw_ticks(
+        self, p: QPainter, c: QPointF, u: float, accent: QColor, dim: float, lit: int | None
+    ) -> None:
+        """Marcas del anillo interior: todas tenues (``lit=None``) o solo las encendidas que giran."""
+        r_in, r_out = u * 0.255, u * 0.285
+        for i in range(TICKS):
+            if lit is None:
+                col, width = QColor(accent), 1.2
+                col.setAlphaF(0.35 * dim)
+            else:
+                if ((i - lit) % TICKS) >= TICKS * 0.35:
+                    continue
+                col, width = QColor("#ffffff"), 2.0
+                col.setAlphaF(0.9 * dim)
+            ang = 2 * math.pi * i / TICKS - math.pi / 2
+            p.setPen(QPen(col, width))
+            p.drawLine(
+                QPointF(c.x() + r_in * math.cos(ang), c.y() + r_in * math.sin(ang)),
+                QPointF(c.x() + r_out * math.cos(ang), c.y() + r_out * math.sin(ang)),
+            )
+
+    def _draw_bars(self, p: QPainter, c: QPointF, u: float, accent: QColor, dim: float) -> None:
+        """Barras del ecualizador, agrupadas por intensidad (un lápiz por grupo, no uno por barra)."""
+        r0 = u * 0.60
+        width = max(1.5, u * 0.012)
+        groups: dict[int, list[QLineF]] = {}
+        for i, v in enumerate(self._bars):
+            if v < 0.004 and self.mood is not Mood.RUNNING:
+                continue
+            ang = 2 * math.pi * i / BARS - math.pi / 2
+            length = u * (0.015 + 0.28 * v)
+            line = QLineF(
+                c.x() + r0 * math.cos(ang),
+                c.y() + r0 * math.sin(ang),
+                c.x() + (r0 + length) * math.cos(ang),
+                c.y() + (r0 + length) * math.sin(ang),
+            )
+            groups.setdefault(min(5, int(v * 8)), []).append(line)
+        for level, lines in groups.items():
+            v = (level + 0.5) / 8
+            col = QColor(accent).lighter(100 + int(60 * v))
+            col.setAlphaF((0.35 + 0.65 * min(1.0, v * 1.5)) * dim)
+            p.setPen(QPen(col, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLines(lines)
+
+    def _draw_orb(self, p: QPainter, c: QPointF, u: float, accent: QColor, dot: QColor) -> None:
+        r = u * 0.17
+        for k, alpha in ((1.55, 0.10), (1.3, 0.16), (1.12, 0.28)):  # halo
+            col = QColor(accent)
+            col.setAlphaF(alpha)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(col)
+            p.drawEllipse(c, r * k, r * k)
+        g = QRadialGradient(c, r)
+        g.setColorAt(0.0, QColor("#06104a"))
+        g.setColorAt(0.5, QColor("#1636c8"))
+        g.setColorAt(0.85, QColor("#2f7bff"))
+        g.setColorAt(1.0, QColor("#8fd8ff"))
+        p.setBrush(QBrush(g))
+        p.setPen(QPen(QColor("#bfe6ff"), max(1.5, u * 0.012)))
+        p.drawEllipse(c, r, r)
+        inner = QRadialGradient(c, r * 0.55)
+        inner.setColorAt(0.0, QColor("#02061f"))
+        inner.setColorAt(1.0, QColor(2, 6, 31, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(inner))
+        p.drawEllipse(c, r * 0.55, r * 0.55)
+        glow = QColor(dot)
+        glow.setAlphaF(0.35)
+        p.setBrush(glow)
+        p.drawEllipse(c, r * 0.16, r * 0.16)
+        p.setBrush(dot)
+        p.drawEllipse(c, r * 0.07, r * 0.07)
+
+    def _draw_texts(self, p: QPainter, c: QPointF, u: float, accent: QColor) -> None:
+        title = QFont("Segoe UI", max(9, int(u * 0.058)), QFont.Weight.Bold)
+        p.setFont(title)
+        p.setPen(QColor("#ffffff"))
+        p.drawText(
+            QRectF(c.x() - u * 0.5, c.y() - u * 0.47, u * 1.0, u * 0.10),
+            Qt.AlignmentFlag.AlignCenter,
+            TITLES[self.mood],
+        )
+        sub = QFont("Segoe UI", max(8, int(u * 0.05)), QFont.Weight.DemiBold)
+        p.setFont(sub)
+        p.setPen(QColor(accent).lighter(135))
+        p.drawText(
+            QRectF(c.x() - u * 0.5, c.y() - u * 0.40, u * 1.0, u * 0.09),
+            Qt.AlignmentFlag.AlignCenter,
+            f"{self.src_name} → {self.dst_name}",
+        )
+        if self.caption:
+            cap = QFont("Segoe UI", max(8, int(u * 0.04)))
+            p.setFont(cap)
+            box = QRectF(c.x() - u * 0.62, c.y() + u * 0.70, u * 1.24, u * 0.17)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(4, 12, 40, 150))  # fondo para que el texto se lea sobre las barras
+            p.drawRoundedRect(box, u * 0.04, u * 0.04)
+            p.setPen(QColor(255, 255, 255, 235))
+            p.drawText(
+                box.adjusted(8, 2, -8, -2),
+                Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+                self.caption,
+            )
+
+    def _draw_buttons(self, p: QPainter, accent: QColor) -> None:
+        rects = self.button_rects()
+        labels = {"settings": "Ajustes", "history": "Historial", "mic": "Micrófono"}
+        font = QFont("Segoe UI", max(7, int(self._unit() * 0.042)), QFont.Weight.DemiBold)
+        for name, rect in rects.items():
+            col = QColor("#ffffff")
+            if name == "mic" and self.muted:
+                col = QColor("#ff6b6b")
+            pen = QPen(col, max(1.6, self._unit() * 0.012), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            icon_area = QRectF(rect.x(), rect.y(), rect.width(), rect.height() * 0.62)
+            {"settings": self._icon_gear, "history": self._icon_clock, "mic": self._icon_mic}[name](
+                p, icon_area
+            )
+            p.setFont(font)
+            p.setPen(col)
+            p.drawText(
+                QRectF(
+                    rect.x() - 10, rect.y() + rect.height() * 0.60, rect.width() + 20, rect.height() * 0.45
+                ),
+                Qt.AlignmentFlag.AlignCenter,
+                labels[name],
+            )
+
+    @staticmethod
+    def _icon_gear(p: QPainter, r: QRectF) -> None:
+        c = r.center()
+        rad = min(r.width(), r.height()) * 0.36
+        path = QPainterPath()
+        for i in range(8):
+            ang = math.pi * 2 * i / 8
+            path.moveTo(c.x() + rad * 0.85 * math.cos(ang), c.y() + rad * 0.85 * math.sin(ang))
+            path.lineTo(c.x() + rad * 1.2 * math.cos(ang), c.y() + rad * 1.2 * math.sin(ang))
+        p.drawPath(path)
+        p.drawEllipse(c, rad * 0.85, rad * 0.85)
+        p.drawEllipse(c, rad * 0.35, rad * 0.35)
+
+    @staticmethod
+    def _icon_clock(p: QPainter, r: QRectF) -> None:
+        c = r.center()
+        rad = min(r.width(), r.height()) * 0.38
+        p.drawEllipse(c, rad, rad)
+        p.drawLine(c, QPointF(c.x(), c.y() - rad * 0.65))
+        p.drawLine(c, QPointF(c.x() + rad * 0.45, c.y() + rad * 0.2))
+
+    @staticmethod
+    def _icon_mic(p: QPainter, r: QRectF) -> None:
+        c = r.center()
+        h = min(r.width(), r.height())
+        body = QRectF(c.x() - h * 0.14, c.y() - h * 0.46, h * 0.28, h * 0.56)
+        p.drawRoundedRect(body, h * 0.14, h * 0.14)
+        arc = QRectF(c.x() - h * 0.26, c.y() - h * 0.28, h * 0.52, h * 0.5)
+        p.drawArc(arc, 200 * 16, 140 * 16)
+        p.drawLine(QPointF(c.x(), c.y() + h * 0.22), QPointF(c.x(), c.y() + h * 0.38))
+        p.drawLine(QPointF(c.x() - h * 0.14, c.y() + h * 0.38), QPointF(c.x() + h * 0.14, c.y() + h * 0.38))
+
+    # -- ratón -----------------------------------------------------------------
+
+    def mousePressEvent(self, event) -> None:  # noqa: ANN001, N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = event.position()
+            zone = self.hit_test(event.position())
+            if zone == "drag" and self.windowHandle() is not None:
+                self.windowHandle().startSystemMove()  # arrastrar desde cualquier zona libre del círculo
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001, N802
+        if event.button() != Qt.MouseButton.LeftButton or self._press_pos is None:
+            return
+        moved = (event.position() - self._press_pos).manhattanLength()
+        zone = self.hit_test(event.position())
+        self._press_pos = None
+        if moved > 6:
+            return
+        signals = {
+            "orb": self.toggle_requested,
+            "settings": self.settings_requested,
+            "history": self.history_requested,
+            "mic": self.mic_requested,
+        }
+        if zone in signals:
+            signals[zone].emit()
+
+    def contextMenuEvent(self, event) -> None:  # noqa: ANN001, N802
+        menu = QMenu(self)
+        top = QAction("Siempre visible", menu, checkable=True)
+        top.setChecked(bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint))
+        top.toggled.connect(self.set_always_on_top)
+        menu.addAction(top)
+        classic = menu.addAction("Volver a la ventana clásica")
+        classic.triggered.connect(self.classic_requested.emit)
+        menu.addSeparator()
+        menu.addAction("Salir de Interpreter").triggered.connect(self.close)
+        menu.exec(event.globalPos())
+
+    def closeEvent(self, event) -> None:  # noqa: ANN001, N802
+        self._timer.stop()
+        self.closed.emit()
+        super().closeEvent(event)
+
+    def set_always_on_top(self, on: bool) -> None:
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
+        if was_visible:
+            self.show()  # cambiar las banderas oculta la ventana
+
+    def wheelEvent(self, event) -> None:  # noqa: ANN001, N802
+        """Rueda del ratón: cambia el tamaño del orbe (cuadrado, entre 320 y 900 px)."""
+        step = 24 if event.angleDelta().y() > 0 else -24
+        side = max(320, min(900, self.width() + step))
+        self.resize(side, side)

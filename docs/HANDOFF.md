@@ -11,7 +11,7 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.3.1**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+- **Versiones al cierre:** app **0.4.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
   en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
@@ -26,6 +26,11 @@ verificado o como hipótesis.
 > 0.3.1: **voces de hombre y de mujer** en el perfil «Rápido (voz genérica)» (`voices.py`): catálogo por idioma
 > (MMS, YourTTS incorporadas, Coqui css10 y voces de Windows/SAPI con el género que informa Windows), selector «Voz»
 > en la ventana, recordado por idioma; las de YourTTS piden aceptar su licencia. Probadas con tono (F0) y Whisper.
+
+> 0.4.0: **modo orbe** (`ui/hud.py`): interfaz alternativa con ventana sin marco y transparente (diseño de la persona:
+> anillos, barras, orbe con punto de estado, Ajustes/Historial/Micrófono). Opcional: botón «Modo orbe» en la ventana
+> clásica; clic derecho en el orbe → «Volver a la ventana clásica». Dibujado con `QPainter` (sin imágenes ni desenfoques,
+> por la CPU). Primer prototipo: el diseño completo (partículas, destellos, escritura árabe) NO está; ver §16.
 
 ## 2. Línea de tiempo (commits relevantes en `dev`)
 
@@ -235,3 +240,16 @@ especificado allí, solo como archivos nuevos (sin commit):
 **Pendiente en ESTE proyecto para ser un buen widget (no hecho):** candado de una sola instancia (hoy dos instancias compiten
 por el micrófono y el puerto 8765), `--version` y un `widget.json` en la raíz (ejemplo en el Anexo A de esa spec). Debe seguir
 lanzándose con `Iniciar Interpreter.bat`; no cambia nada de lo que usa la persona hoy.
+
+## 16. Modo orbe: qué hay y qué falta
+
+- **Hay:** ventana transparente sin marco (`WA_TranslucentBackground`; los píxeles transparentes dejan pasar el clic),
+  arrastrar desde cualquier zona libre, rueda del ratón = tamaño, menú (siempre visible / clásica / salir), anillo brillante
+  que gira, marcas, barras que reaccionan al micrófono, orbe cuyo punto indica el estado (rojo = interpretando), pulso al
+  hablar la traducción, subtítulo con «lo que dijiste → traducción», y nombres nativos de idioma («Español → English»).
+- **Falta (el diseño de referencia lo tiene):** partículas y ondas laterales, escritura árabe/otros alfabetos alrededor,
+  haces de luz, desenfoque de fondo. Se dejó fuera adrede: costaría CPU y los modelos ya la necesitan. Si se quiere esa
+  riqueza visual, la vía es un **PNG con transparencia** exportado del diseño (capas estáticas) y animar solo lo mínimo.
+- **No verificado:** cómo se ve y se siente en la pantalla real de la persona (solo se dibujó en pruebas), el consumo de CPU
+  durante una reunión, varios monitores / escalado de pantalla alto, y el comportamiento con la barra de tareas.
+- Las barras se mueven con el nivel real del micrófono; su forma por barra es un perfil fijo decorativo (no es un espectro real).

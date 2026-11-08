@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import logging
 import math
@@ -52,6 +53,7 @@ from ..stages.backends import app_home
 from ..voices import SapiVoice, installed_sapi_voices, voices_for
 from . import theme
 from .glossary_dialog import GlossaryDialog
+from .hud import NATIVE, Mood, OrbWindow
 from .voice_dialog import VoiceSampleDialog
 
 log = logging.getLogger(__name__)
@@ -217,8 +219,8 @@ class MainWindow(QMainWindow):
         self._bridge.state.connect(self._on_state)
         self._bridge.level.connect(self._on_level)
         self._bridge.metrics.connect(self._on_metrics)
-        self._bridge.original.connect(lambda t: self._log("Tú", t))
-        self._bridge.translation.connect(lambda t: self._log("→", t))
+        self._bridge.original.connect(self._on_original_text)
+        self._bridge.translation.connect(self._on_translation_text)
         self._bridge.error.connect(self._on_error)
         self._bridge.loop.connect(self._on_loop_result)
         self._bridge.dropped.connect(self._on_dropped)
@@ -249,9 +251,16 @@ class MainWindow(QMainWindow):
         self._device_timer.timeout.connect(self._poll_devices)
         self._device_timer.start(DEVICE_POLL_MS)
 
+        self._orb: OrbWindow | None = None
+        self._closing = False
+        self._last_original = ""
         self._on_state(EngineState.IDLE, "")
         if load_on_start:
             self.reload_models()
+        if str(self._settings.value("ui_mode", "classic", type=str)) == "orb":
+            QTimer.singleShot(
+                0, self.open_orb
+            )  # la última vez usaste el orbe: se abre solo (menú: «ventana clásica»)
 
     # -- construcción ------------------------------------------------------------------------------
 
@@ -312,6 +321,8 @@ class MainWindow(QMainWindow):
         outer.addWidget(lang_card)
         self.cmb_target.currentIndexChanged.connect(self._on_target_changed)
         self.cmb_source.currentIndexChanged.connect(self._check_devices)  # borra avisos viejos de idiomas
+        self.cmb_source.currentIndexChanged.connect(lambda *_: self._sync_orb())
+        self.cmb_target.currentIndexChanged.connect(lambda *_: self._sync_orb())
 
         # Audio
         audio_card, audio_lay = _card()
@@ -394,8 +405,14 @@ class MainWindow(QMainWindow):
         self.btn_mute.setCheckable(True)
         self.btn_mute.setToolTip("Mientras esté activo, lo que digas NO se traduce ni se envía a la llamada.")
         self.btn_mute.toggled.connect(self._on_mute_toggled)
+        self.btn_orb = QPushButton("Modo orbe")
+        self.btn_orb.setToolTip(
+            "Interfaz alternativa: una ventana transparente con un orbe (clic derecho para volver)."
+        )
+        self.btn_orb.clicked.connect(self.open_orb)
         ctrl.addWidget(self.btn_toggle, 1)
         ctrl.addWidget(self.btn_mute)
+        ctrl.addWidget(self.btn_orb)
         outer.addLayout(ctrl)
 
         # Latencia
@@ -935,6 +952,7 @@ class MainWindow(QMainWindow):
 
     def _on_mute_toggled(self, muted: bool) -> None:
         self.engine.set_muted(muted)
+        self._sync_orb()
         self.btn_mute.setText(MUTE_ON_TEXT if muted else MUTE_OFF_TEXT)
         self.btn_mute.setStyleSheet(
             f"background:{theme.WARN}; color:#2a1a00; border:1px solid {theme.WARN}; font-weight:700;"
@@ -998,8 +1016,87 @@ class MainWindow(QMainWindow):
             w.setEnabled(editable)
         if not running:
             self._level = 0.0
+        self._sync_orb()
+
+    # -- orbe (interfaz alternativa) -------------------------------------------------------------------------
+
+    def _on_original_text(self, text: str) -> None:
+        self._log("Tú", text)
+        self._last_original = text
+
+    def _on_translation_text(self, text: str) -> None:
+        self._log("→", text)
+        if self._orb is not None:
+            self._orb.set_caption(f"{self._last_original}  →  {text}" if self._last_original else text)
+            self._orb.speak(len(text) * 0.065)  # estimado: la voz tarda ~65 ms por carácter
+
+    def _sync_orb(self) -> None:
+        """Lleva al orbe el estado del motor, el silencio y los idiomas (si está abierto)."""
+        if self._orb is None:
+            return
+        state = self._pill_state[0]
+        if state is EngineState.ERROR:
+            mood = Mood.ERROR
+        elif state is EngineState.RUNNING:
+            mood = Mood.MUTED if self.engine.muted else Mood.RUNNING
+        elif state is EngineState.READY:
+            mood = Mood.MUTED if self.engine.muted else Mood.READY
+        else:
+            mood = Mood.LOADING
+        self._orb.muted = self.engine.muted
+        self._orb.set_mood(mood)
+        src, dst = self.cmb_source.currentData(), self.cmb_target.currentData()
+        self._orb.set_languages(NATIVE.get(src, str(src)), NATIVE.get(dst, str(dst)))
+
+    def open_orb(self) -> None:
+        """Abre el orbe y esconde esta ventana (se vuelve con «Ajustes», «Historial» o el menú del orbe)."""
+        if self._orb is None:
+            orb = OrbWindow()
+            orb.toggle_requested.connect(self._orb_toggle)
+            orb.mic_requested.connect(self.btn_mute.toggle)
+            orb.settings_requested.connect(self._show_classic)
+            orb.history_requested.connect(self._show_history)
+            orb.classic_requested.connect(self.close_orb)
+            orb.closed.connect(self._orb_closed)
+            self._orb = orb
+        self._sync_orb()
+        self._orb.show()
+        self._orb.raise_()
+        self.hide()
+        self._settings.setValue("ui_mode", "orb")
+
+    def close_orb(self) -> None:
+        orb, self._orb = self._orb, None
+        if orb is not None:
+            with contextlib.suppress(Exception):
+                orb.closed.disconnect(self._orb_closed)
+            orb.close()
+        self._settings.setValue("ui_mode", "classic")
+        self.show()
+        self.raise_()
+
+    def _orb_toggle(self) -> None:
+        if self.btn_toggle.isEnabled():
+            self._toggle()
+
+    def _orb_closed(self) -> None:
+        """Cerraron el orbe (Alt+F4 o «Salir»): si esta ventana está oculta, se sale de la aplicación."""
+        self._orb = None
+        if not self.isVisible() and not self._closing:
+            self.close()
+
+    def _show_classic(self) -> None:
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _show_history(self) -> None:
+        self._show_classic()
+        self.log.setFocus()
 
     def _on_level(self, rms: float) -> None:
+        if self._orb is not None and not self.engine.muted:
+            self._orb.push_level(rms)
         if self.engine.muted:  # silenciado: el medidor quieto evita pensar que se está traduciendo
             self._level = 0.0
             return
@@ -1031,6 +1128,12 @@ class MainWindow(QMainWindow):
         self.log.appendPlainText(f"{who}  {text}")
 
     def closeEvent(self, event) -> None:  # noqa: ANN001, N802
+        self._closing = True
+        orb, self._orb = self._orb, None
+        if orb is not None:
+            with contextlib.suppress(Exception):
+                orb.closed.disconnect(self._orb_closed)
+            orb.close()
         self._save_settings()
         self.engine.close()
         super().closeEvent(event)
