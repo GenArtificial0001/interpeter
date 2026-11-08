@@ -4,6 +4,9 @@ Intérprete de voz **local** en tiempo real para videollamadas. Hablas en tu idi
 demás participantes de Teams, Zoom o Meet te escuchan en otro (inglés, portugués o francés). Todo corre en
 tu PC: sin nube, sin cuentas y sin enviar audio a nadie.
 
+> **Para continuar el desarrollo (otra IA o persona):** empieza por [AGENTS.md](AGENTS.md) y
+> [docs/HANDOFF.md](docs/HANDOFF.md).
+>
 > **Estado:** motor, interfaz de escritorio y benchmark funcionando. Falta la prueba con Teams por el
 > bucle físico de audio y la clonación en vivo (necesita aceleración, ver abajo).
 
