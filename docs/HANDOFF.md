@@ -11,8 +11,8 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.2.3**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main`
-  está más atrás (en 0.2.1, commit `0b01a6c`) hasta que el usuario valide las versiones nuevas.
+- **Versiones al cierre:** app **0.2.4**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+  en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
 - **Lo que NO está resuelto:** los *microcortes* que oyó el interlocutor con la voz clonada rápida en una
@@ -32,6 +32,7 @@ verificado o como hipótesis.
 | `f324788` → revertido en `0b01a6c` | 0.3.0: alemán, chino y japonés. **El usuario pidió revertirlo** (ver §10). |
 | `8868f33` | 0.2.2: números dichos uno por uno aceptados; cifras sin pasar por el traductor; avisos viejos. |
 | `5c0f9db` | 0.2.3 + extensión 0.3.3: menos cortes y espera (ver §9). |
+| `bc5fbf4` | 0.2.4: inglés → español (voz genérica/XTTS); el glosario solo corrige lo oído en español. |
 
 ## 3. Arquitectura
 
@@ -46,8 +47,8 @@ micrófono ─► MicCapture (hilo, cola) ─► Segmenter + AdaptiveEnergyVAD (
 
 - **Motor** (`engine.py`): `Engine` carga los modelos (`load`), `start/stop`, eventos para la UI (estado,
   nivel, transcripción, traducción, descartes, métricas, clientes del navegador). `EngineConfig` guarda
-  idioma, perfil, pausa, acelerador, etc. `voice_problem` no existe en esta versión (vive en el commit
-  revertido `f324788`).
+  idioma, perfil, pausa, acelerador, etc. `voice_problem`/`VOICE_LANGS` dicen qué perfil habla qué idioma (YourTTS no habla
+  español); la UI avisa y `start()` da un error claro.
 - **Descartes** (visibles en la UI con su motivo): `sin_texto`, `idioma_distinto`, `poca_confianza`,
   `traduccion_vacia`, `sin_audio`, `cola` (cola llena), `eco`, `silenciado`.
 - **Anti-eco:** si la frase empieza mientras suena la traducción por un dispositivo (`Player.busy_until` +
@@ -71,9 +72,9 @@ micrófono ─► MicCapture (hilo, cola) ─► Segmenter + AdaptiveEnergyVAD (
 
 | Perfil | Motor | Idiomas | Velocidad | Notas |
 |---|---|---|---|---|
-| Rápido (genérica) | MMS-TTS (VITS) | es, en, pt, fr (+de) | muy rápida | voz robótica; sin clonar |
+| Rápido (genérica) | MMS-TTS (VITS) | es, en, pt, fr | muy rápida | voz robótica; sin clonar |
 | Clonado rápido | YourTTS (coqui) | **solo en, fr-fr, pt-br** | RTF 0,14–0,23 | usa la muestra del usuario; licencia CC BY-NC-ND |
-| Clonado lento | XTTSv2 (coqui) | muchos | **RTF ≈1,8: no es tiempo real en CPU** | se corta en frases; solo útil con aceleración |
+| Clonado lento | XTTSv2 (coqui) | es, en, pt, fr (XTTS soporta más) | **RTF ≈1,8: no es tiempo real en CPU** | se corta en frases; solo útil con aceleración |
 
 El usuario prefiere **Clonado rápido**. Probó «Rápido (genérica)» y dijo «funciona muy bien». Los cortes que
 reportó fueron con Clonado rápido.
@@ -165,7 +166,8 @@ precisión; (6) registrar `MicCapture.overruns` y subárranques del `Player` en 
   idioma (hoy solo hay en-US y es-ES).
 - **Todo local**, sin FordLLM ni nube. **Sin cable** mientras use reuniones web.
 - El usuario quiere ver siempre la **versión** (título de la ventana + `.bat`).
-- Idioma de salida más usado: inglés.
+- Idioma de salida más usado: inglés. Una persona que habla inglés puede elegir «Yo hablo: Inglés» →
+  «Ellos escuchan: Español» (solo con voz genérica o XTTS; el texto de «Grabar mi voz» sigue en español).
 
 ## 11. Cómo probar cada cosa (checklist para quien continúe)
 
