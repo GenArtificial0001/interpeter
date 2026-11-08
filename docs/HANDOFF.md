@@ -358,3 +358,9 @@ se calcula igual. Tests: `tests/test_player.py` (callback simulado, `_FIFO`, est
 Sin verificar de oído (los tests no suenan en altavoces reales). Si sigue robótico, pedir: perfil de voz, micrófono y salida
 usados, y probar otra salida; sospechar de Bluetooth en modo «manos libres» (HFP, 16 kHz) cuando el auricular también
 hace de micrófono, de las «mejoras de audio» de Windows o de usar la entrada MME en vez de WASAPI.
+
+## 24. Logo de Ford en Ajustes (0.8.2)
+
+El óvalo de Ford (`src/interpreter/ui/assets/ford-logo.png`, 360 px de ancho, reducido del original de 3500 px) está en la
+esquina derecha de la barra superior de Ajustes (`_ford_logo()` en `ui/window.py`, `MainWindow.lbl_logo`). Si el archivo
+falta, la ventana abre igual sin logo. `pyproject.toml` declara `assets/*.png` como dato del paquete.

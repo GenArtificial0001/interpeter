@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "interpreter"
-version = "0.8.1"
+version = "0.8.2"
 description = "Intérprete de voz local en tiempo real (español -> inglés/portugués/francés) con voz clonada"
 requires-python = ">=3.11"
 dependencies = [
@@ -47,6 +47,9 @@ interpreter-bench = "interpreter.bench:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"interpreter.ui" = ["assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

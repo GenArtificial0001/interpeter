@@ -871,3 +871,14 @@ def test_una_voz_de_yourtts_pide_aceptar_su_licencia(app, settings):
     assert preguntas == ["clone_fast"]
     assert win.engine.config.voice != "yourtts:female-pt-4"  # sin aceptar la licencia no se usa
     win.close()
+
+
+def test_el_logo_de_ford_esta_en_la_barra_superior_de_ajustes(app, settings):
+    from interpreter.ui.window import LOGO_PATH
+
+    assert LOGO_PATH.is_file()
+    win = MainWindow(_builder, settings=settings, load_on_start=False)
+    assert win.lbl_logo is not None
+    pix = win.lbl_logo.pixmap()
+    assert not pix.isNull() and pix.width() > pix.height()  # óvalo apaisado, sin deformar
+    win.close()

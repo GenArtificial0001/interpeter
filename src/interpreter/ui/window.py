@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -171,6 +172,24 @@ class Bridge(QObject):
             on_progress=self.progress.emit,
             on_error=self.error.emit,
         )
+
+
+LOGO_PATH = Path(__file__).parent / "assets" / "ford-logo.png"
+LOGO_HEIGHT = 30  # px lógicos en la barra superior (el PNG tiene el doble para pantallas nítidas)
+
+
+def _ford_logo() -> QLabel | None:
+    """Óvalo Ford para la esquina de la barra superior; ``None`` si el archivo no está (no es crítico)."""
+    pix = QPixmap(str(LOGO_PATH))
+    if pix.isNull():
+        return None
+    pix = pix.scaledToHeight(int(LOGO_HEIGHT * 2), Qt.TransformationMode.SmoothTransformation)
+    pix.setDevicePixelRatio(2.0)
+    label = QLabel()
+    label.setObjectName("fordLogo")
+    label.setPixmap(pix)
+    label.setToolTip("Ford Motor Company")
+    return label
 
 
 def _card() -> tuple[QFrame, QVBoxLayout]:
@@ -364,6 +383,10 @@ class MainWindow(QMainWindow):
         top.addWidget(self.lbl_page)
         top.addStretch(1)
         top.addWidget(self.state_pill)
+        self.lbl_logo = _ford_logo()
+        if self.lbl_logo is not None:
+            top.addSpacing(10)
+            top.addWidget(self.lbl_logo)
         outer.addWidget(topbar)
 
         # Idiomas
