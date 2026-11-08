@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QCursor, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -1394,13 +1395,14 @@ class MainWindow(QMainWindow):
         self._orb.set_languages(NATIVE.get(src, str(src)), NATIVE.get(dst, str(dst)))
 
     def open_orb(self) -> None:
-        """Abre el orbe y esconde esta ventana (se vuelve con «Ajustes», «Historial» o el menú del orbe)."""
+        """Abre el orbe y esconde esta ventana (se vuelve con «Ajustes» o el menú del orbe)."""
         if self._orb is None:
             orb = OrbWindow()
             orb.toggle_requested.connect(self._orb_toggle)
             orb.mic_requested.connect(self.btn_mute.toggle)
             orb.settings_requested.connect(self._show_classic)
-            orb.history_requested.connect(self._show_history)
+            orb.input_requested.connect(lambda: self._pick_device(self.cmb_input, "Micrófono de entrada"))
+            orb.output_requested.connect(lambda: self._pick_device(self.cmb_output, "Salida de audio"))
             orb.classic_requested.connect(self.close_orb)
             orb.closed.connect(self._orb_closed)
             orb.volume_step.connect(self._orb_volume_step)
@@ -1452,9 +1454,17 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def _show_history(self) -> None:
-        self._show_classic()
-        self.log.setFocus()
+    def _pick_device(self, combo: QComboBox, title: str) -> None:
+        """Menú junto al cursor con los dispositivos del desplegable (elegir uno = elegirlo en Ajustes)."""
+        menu = QMenu(self)
+        menu.addSection(title)
+        for i in range(combo.count()):
+            text = combo.itemText(i)
+            action = menu.addAction(text if len(text) <= 60 else text[:57] + "…")
+            action.setCheckable(True)
+            action.setChecked(i == combo.currentIndex())
+            action.triggered.connect(lambda _=False, idx=i: combo.setCurrentIndex(idx))
+        menu.exec(QCursor.pos())
 
     def _on_level(self, rms: float) -> None:
         if rms > 1e-6:

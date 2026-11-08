@@ -51,7 +51,7 @@ def test_zonas_de_clic(app):
     c = w._center()
     assert w.hit_test(c) == "orb"
     rects = w.button_rects()
-    for name in ("settings", "history", "mic"):
+    for name in ("settings", "input", "mic", "output"):
         assert w.hit_test(rects[name].center()) == name
     assert w.hit_test(QPointF(c.x() + w._unit() * 0.7, c.y() - w._unit() * 0.5)) == "drag"
     assert w.hit_test(QPointF(1, 1)) == "none"  # fuera del círculo: los clics pasan al escritorio
@@ -63,12 +63,19 @@ def test_los_clics_emiten_las_senales(app):
     visto = []
     w.toggle_requested.connect(lambda: visto.append("orb"))
     w.settings_requested.connect(lambda: visto.append("ajustes"))
-    w.history_requested.connect(lambda: visto.append("historial"))
+    w.input_requested.connect(lambda: visto.append("entrada"))
+    w.output_requested.connect(lambda: visto.append("salida"))
     w.mic_requested.connect(lambda: visto.append("mic"))
     r = w.button_rects()
-    for pos in (w._center(), r["settings"].center(), r["history"].center(), r["mic"].center()):
+    for pos in (
+        w._center(),
+        r["settings"].center(),
+        r["input"].center(),
+        r["output"].center(),
+        r["mic"].center(),
+    ):
         QTest.mouseClick(w, Qt.MouseButton.LeftButton, pos=pos.toPoint())
-    assert visto == ["orb", "ajustes", "historial", "mic"]
+    assert visto == ["orb", "ajustes", "entrada", "salida", "mic"]
     w.close()
 
 
@@ -273,19 +280,75 @@ def test_abrir_el_orbe_esconde_la_clasica_y_refleja_el_estado(app, settings):
     win.close()
 
 
-def test_los_botones_del_orbe_controlan_la_aplicacion(app, settings):
+class FalsaAccion:
+    def __init__(self, texto):
+        self.texto, self.marcada, self._slots = texto, False, []
+        self.triggered = self
+
+    def setCheckable(self, _v):  # noqa: N802
+        pass
+
+    def setChecked(self, v):  # noqa: N802
+        self.marcada = v
+
+    def connect(self, fn):
+        self._slots.append(fn)
+
+    def disparar(self):
+        for fn in self._slots:
+            fn()
+
+
+class FalsoMenu:  # el menú real es modal y bloquearía la prueba
+    ultimo = None
+
+    def __init__(self, *_a):
+        self.titulo, self.acciones = None, []
+        FalsoMenu.ultimo = self
+
+    def addSection(self, titulo):  # noqa: N802
+        self.titulo = titulo
+
+    def addAction(self, texto):  # noqa: N802
+        self.acciones.append(FalsaAccion(texto))
+        return self.acciones[-1]
+
+    def exec(self, _pos):
+        return None
+
+
+def test_los_botones_del_orbe_controlan_la_aplicacion(app, settings, monkeypatch):
+    monkeypatch.setattr("interpreter.ui.window.QMenu", FalsoMenu)
     win = _ventana(settings)
     win.open_orb()
     win._orb.mic_requested.emit()
     assert win.engine.muted
     win._orb.settings_requested.emit()
     assert win.isVisible()  # «Ajustes» trae la ventana clásica al frente
-    win.hide()
-    win._orb.history_requested.emit()
-    assert win.isVisible()
     win._orb.classic_requested.emit()
     assert win._orb is None and win.isVisible()
     assert settings.value("ui_mode", "", type=str) == "classic"
+    win.close()
+
+
+def test_entrada_y_salida_del_orbe_abren_un_menu_y_cambian_el_dispositivo(app, settings, monkeypatch):
+    monkeypatch.setattr("interpreter.ui.window.QMenu", FalsoMenu)
+    win = _ventana(settings)
+    win.open_orb()
+    for senal, combo, titulo in (
+        (win._orb.input_requested, win.cmb_input, "Micrófono de entrada"),
+        (win._orb.output_requested, win.cmb_output, "Salida de audio"),
+    ):
+        FalsoMenu.ultimo = None
+        senal.emit()
+        menu = FalsoMenu.ultimo
+        assert menu is not None and menu.titulo == titulo
+        assert [a.texto for a in menu.acciones] == [combo.itemText(i) for i in range(combo.count())]
+        assert [a.marcada for a in menu.acciones].count(True) == 1  # solo el dispositivo actual
+        if combo.count() > 1:
+            otro = 1 if combo.currentIndex() == 0 else 0
+            menu.acciones[otro].disparar()
+            assert combo.currentIndex() == otro  # elegir en el menú = elegir en Ajustes
     win.close()
 
 

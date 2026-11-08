@@ -389,3 +389,12 @@ instalación automática de Python (depende del proxy/permisos de esa máquina).
 `Instalar Interpreter (prueba).bat` empaqueta el código actual (`scripts/build_installer.py --solo-payload`) y abre la
 misma ventana del instalador sin compilar el `.exe`. Usa `.venv` (o `py`/`python`). Elegir una carpeta de instalación
 distinta del repo (por defecto `%USERPROFILE%\Interpreter`).
+
+## 26. Orbe: Entrada / Salida y dependencias declaradas (0.9.3)
+- `websockets` y `psutil` faltaban en `pyproject.toml` (en el entorno de desarrollo llegaban de rebote): en una
+  instalación limpia el puerto 8765 del micrófono virtual no abría. Ahora están declaradas, el instalador las comprueba
+  con `import` y `tests/test_dependencias.py` falla si alguna librería importada no está declarada.
+- Orbe (`ui/hud.py`): «Historial» desaparece. Botones: `settings` (izq.), `input` (der., icono de onda), `mic`
+  (abajo-izq., silenciar) y `output` (abajo-der., icono de altavoz). `input_requested`/`output_requested` abren un `QMenu`
+  junto al cursor (`MainWindow._pick_device`) con los dispositivos del desplegable de Ajustes.
+- Notas de la prueba del instalador: `docs/NOTAS-PRUEBA-INSTALADOR.md`.

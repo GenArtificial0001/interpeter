@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "interpreter"
-version = "0.9.2"
+version = "0.9.3"
 description = "Intérprete de voz local en tiempo real (español -> inglés/portugués/francés) con voz clonada"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "PyYAML>=6.0",
+    "websockets>=13",  # servidor del micrófono virtual del navegador (audio/webmic.py)
 ]
 
 [project.optional-dependencies]
@@ -39,7 +40,7 @@ clone = [
 ]
 # Aceleración en la GPU/NPU de Intel (el índice de Ford tiene `openvino`, no `openvino-genai` ni `optimum`).
 ov = ["openvino>=2026.1"]
-ui = ["PySide6>=6.6"]
+ui = ["PySide6>=6.6", "psutil>=5.9"]
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10", "pyinstaller>=6"]
 
 [project.scripts]

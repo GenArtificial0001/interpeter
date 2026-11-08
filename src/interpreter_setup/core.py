@@ -46,7 +46,10 @@ HF_REPOS = (
 )
 EXTRAS_BASE = ("ml", "ui", "ov")
 EXTRAS_CLONE = ("clone",)
-CHECK_IMPORTS = ("numpy", "scipy", "sounddevice", "torch", "transformers", "PySide6", "openvino")
+CHECK_IMPORTS = (
+    "numpy", "scipy", "sounddevice", "soundfile", "websockets", "psutil", "num2words",
+    "torch", "transformers", "PySide6", "openvino",
+)  # fmt: skip
 CHECK_IMPORTS_CLONE = ("TTS",)
 
 # Script que corre DENTRO del venv para bajar un repo de Hugging Face sin duplicar pesos (safetensors o, si no hay, .bin).

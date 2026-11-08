@@ -102,7 +102,8 @@ class OrbWindow(QWidget):
     toggle_requested = Signal()  # clic en el orbe: iniciar / detener
     mic_requested = Signal()  # clic en «Micrófono»: silenciar / reanudar
     settings_requested = Signal()
-    history_requested = Signal()
+    input_requested = Signal()  # clic en «Entrada»: elegir el micrófono
+    output_requested = Signal()  # clic en «Salida»: elegir dónde suena la voz traducida
     classic_requested = Signal()  # menú: volver a la ventana clásica
     closed = Signal()  # la ventana se cerró (Alt+F4 o menú «Salir»)
     volume_step = Signal(int)  # rueda sobre «Micrófono»: +5 / -5 (volumen de Windows)
@@ -110,7 +111,7 @@ class OrbWindow(QWidget):
     reconnect_requested = Signal()  # menú: reiniciar el micrófono
     animation_changed = Signal(str)  # el modo de animación cambió (menú o apagado automático por lentitud)
 
-    BUTTONS = ("settings", "history", "mic")  # orden de hit-test
+    BUTTONS = ("settings", "input", "mic", "output")  # orden de hit-test
 
     def __init__(self, size: int = SIZE, now: Callable[[], float] = time.monotonic) -> None:
         super().__init__()
@@ -213,12 +214,13 @@ class OrbWindow(QWidget):
         w, h = u * 0.26, u * 0.22
         return {  # dentro del anillo grande (radio 0,52): a los lados y debajo del orbe, como en el diseño
             "settings": QRectF(c.x() - u * 0.41 - w / 2, c.y() - h / 2, w, h),
-            "history": QRectF(c.x() + u * 0.41 - w / 2, c.y() - h / 2, w, h),
-            "mic": QRectF(c.x() - w / 2, c.y() + u * 0.285, w, h),
+            "input": QRectF(c.x() + u * 0.41 - w / 2, c.y() - h / 2, w, h),
+            "mic": QRectF(c.x() - u * 0.15 - w / 2, c.y() + u * 0.255, w, h),
+            "output": QRectF(c.x() + u * 0.15 - w / 2, c.y() + u * 0.255, w, h),
         }
 
     def hit_test(self, pos: QPointF) -> str:
-        """``orb`` | ``settings`` | ``history`` | ``mic`` | ``drag`` (resto del círculo) | ``none``."""
+        """``orb`` | ``settings`` | ``input`` | ``mic`` | ``output`` | ``drag`` (resto) | ``none``."""
         c, u = self._center(), self._unit()
         d = math.hypot(pos.x() - c.x(), pos.y() - c.y())
         if d <= u * 0.17:
@@ -578,7 +580,7 @@ class OrbWindow(QWidget):
 
     def _draw_buttons(self, p: QPainter, accent: QColor) -> None:
         rects = self.button_rects()
-        labels = {"settings": "Ajustes", "history": "Historial", "mic": "Micrófono"}
+        labels = {"settings": "Ajustes", "input": "Entrada", "mic": "Micrófono", "output": "Salida"}
         font = self._font(self._unit() * 0.056, QFont.Weight.DemiBold)
         for name, rect in rects.items():
             col = QColor("#ffffff")
@@ -589,9 +591,13 @@ class OrbWindow(QWidget):
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
             icon_area = QRectF(rect.x(), rect.y(), rect.width(), rect.height() * 0.58)
-            {"settings": self._icon_gear, "history": self._icon_clock, "mic": self._icon_mic}[name](
-                p, icon_area
-            )
+            icons = {
+                "settings": self._icon_gear,
+                "input": self._icon_wave,
+                "mic": self._icon_mic,
+                "output": self._icon_speaker,
+            }
+            icons[name](p, icon_area)
             p.setFont(font)
             p.setPen(col)
             p.drawText(
@@ -616,12 +622,32 @@ class OrbWindow(QWidget):
         p.drawEllipse(c, rad * 0.35, rad * 0.35)
 
     @staticmethod
-    def _icon_clock(p: QPainter, r: QRectF) -> None:
+    def _icon_wave(p: QPainter, r: QRectF) -> None:
+        """Barras de voz (entrada): el sonido que llega del micrófono."""
         c = r.center()
-        rad = min(r.width(), r.height()) * 0.38
-        p.drawEllipse(c, rad, rad)
-        p.drawLine(c, QPointF(c.x(), c.y() - rad * 0.65))
-        p.drawLine(c, QPointF(c.x() + rad * 0.45, c.y() + rad * 0.2))
+        h = min(r.width(), r.height())
+        for i, k in enumerate((0.22, 0.5, 0.78, 0.5, 0.22)):
+            x = c.x() + (i - 2) * h * 0.17
+            p.drawLine(QPointF(x, c.y() - h * 0.36 * k), QPointF(x, c.y() + h * 0.36 * k))
+
+    @staticmethod
+    def _icon_speaker(p: QPainter, r: QRectF) -> None:
+        """Altavoz con ondas (salida)."""
+        c = r.center()
+        h = min(r.width(), r.height())
+        x0 = c.x() - h * 0.30
+        body = QPainterPath()
+        body.moveTo(x0, c.y() - h * 0.12)
+        body.lineTo(x0 + h * 0.14, c.y() - h * 0.12)
+        body.lineTo(x0 + h * 0.34, c.y() - h * 0.30)
+        body.lineTo(x0 + h * 0.34, c.y() + h * 0.30)
+        body.lineTo(x0 + h * 0.14, c.y() + h * 0.12)
+        body.lineTo(x0, c.y() + h * 0.12)
+        body.closeSubpath()
+        p.drawPath(body)
+        for k in (0.16, 0.30):
+            arc = QRectF(x0 + h * 0.34 - h * k, c.y() - h * k, h * k * 2, h * k * 2)
+            p.drawArc(arc, -45 * 16, 90 * 16)
 
     @staticmethod
     def _icon_mic(p: QPainter, r: QRectF) -> None:
@@ -654,7 +680,8 @@ class OrbWindow(QWidget):
         signals = {
             "orb": self.toggle_requested,
             "settings": self.settings_requested,
-            "history": self.history_requested,
+            "input": self.input_requested,
+            "output": self.output_requested,
             "mic": self.mic_requested,
         }
         if zone in signals:

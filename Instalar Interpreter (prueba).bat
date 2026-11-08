@@ -1,5 +1,5 @@
 @echo off
-rem VERSIONES: instalador de prueba de la app 0.9.2 (misma ventana que el .exe, pero sin compilarlo)
+rem VERSIONES: instalador de prueba de la app 0.9.3 (misma ventana que el .exe, pero sin compilarlo)
 rem Abre el instalador de Interpreter para PROBARLO desde esta carpeta, sin generar el .exe.
 rem Empaqueta el codigo actual y abre la ventana. Se ve esta consola por si hay errores.
 rem
@@ -20,7 +20,7 @@ if not defined PY (
   pause
   exit /b 1
 )
-echo Interpreter - instalador de prueba 0.9.2
+echo Interpreter - instalador de prueba 0.9.3
 echo Usando: %PY%
 set PYTHONUTF8=1
 set "PYTHONPATH=%~dp0src"
