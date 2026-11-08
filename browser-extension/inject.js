@@ -22,7 +22,12 @@
   let dest = null;
   let playHead = 0;
   const active = new Set();
-  const live = new Set(); // pistas entregadas a la página que siguen vivas: sin ellas, no se reproduce nada
+  const live = new Set(); // pistas entregadas a la página (y sus clones): sin ninguna viva, no se reproduce nada
+  const virtuales = new WeakSet(); // todas las pistas virtuales, para reconocer sus copias en MediaStream.clone()
+  const vivas = () => {
+    for (const t of live) if (t.readyState !== "live") live.delete(t);
+    return live.size;
+  };
   const state = { connected: false, chunks: 0, dropped: 0 };
 
   function ensureStream() {
@@ -42,7 +47,7 @@
   }
 
   function enqueue(rate, int16) {
-    if (!live.size || !ctx || ctx.state !== "running") { state.dropped++; return; } // nadie escucha en esta pestaña
+    if (!vivas() || !ctx || ctx.state !== "running") { state.dropped++; return; } // nadie escucha en esta pestaña
     const now = ctx.currentTime;
     if (playHead - now > MAX_LAG_S) { state.dropped++; return; } // demasiado atrasado: se descarta
     const f32 = new Float32Array(int16.length);
@@ -87,13 +92,16 @@
     window.addEventListener(evName, () => { if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {}); }, true);
   }
 
-  function makeVirtualTrack() {
-    const track = ensureStream().getAudioTracks()[0].clone(); // clon: parar uno no apaga el origen
-    const release = () => live.delete(track);
+  // Registra una pista virtual (la original o cualquier clon): cuenta como viva hasta que su readyState sea "ended".
+  function register(track) {
+    virtuales.add(track);
     live.add(track);
+    const release = () => live.delete(track);
     const stop = track.stop.bind(track);
     track.stop = () => { release(); stop(); };
     track.addEventListener("ended", release);
+    const clone = track.clone.bind(track);
+    track.clone = () => register(clone()); // la página puede clonar la pista (vista previa) y parar la original
     const settings = track.getSettings.bind(track);
     // Un micrófono real sin procesado: Teams no debe asumir que ya se aplicó cancelación de eco o ruido.
     track.getSettings = () => ({
@@ -103,6 +111,23 @@
     try { Object.defineProperty(track, "label", { value: VIRTUAL_LABEL }); } catch (_) { /* solo lectura */ }
     return track;
   }
+
+  function makeVirtualTrack() {
+    return register(ensureStream().getAudioTracks()[0].clone()); // clon: parar uno no apaga el origen
+  }
+
+  // MediaStream.clone() clona las pistas por dentro (sin pasar por track.clone): se registran las copias virtuales.
+  const origStreamClone = MediaStream.prototype.clone;
+  Object.defineProperty(MediaStream.prototype, "clone", {
+    configurable: true,
+    writable: true,
+    value: function () {
+      const copy = origStreamClone.call(this);
+      const from = this.getAudioTracks(), to = copy.getAudioTracks();
+      from.forEach((t, i) => { if (virtuales.has(t) && to[i]) register(to[i]); });
+      return copy;
+    },
+  });
 
   async function virtualGetUserMedia(constraints) {
     if (!constraints || !constraints.audio) return origGetUserMedia.call(md, constraints);
@@ -154,7 +179,7 @@
     conectado: state.connected,
     trozosRecibidos: state.chunks,
     trozosDescartados: state.dropped,
-    pistasVivas: live.size,
+    pistasVivas: vivas(),
     audioContext: ctx ? ctx.state : "sin crear",
   });
 })();
