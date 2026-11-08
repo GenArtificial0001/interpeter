@@ -10,6 +10,7 @@ import logging
 import queue
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -113,13 +114,55 @@ class MicCapture:
             self.on_segment(tail)
 
 
+class _FIFO:
+    """Cola de audio mono (float32): ``push`` desde un hilo, ``pull`` desde el callback de PortAudio."""
+
+    def __init__(self) -> None:
+        self._chunks: deque[np.ndarray] = deque()
+        self._pos = 0
+        self._lock = threading.Lock()
+
+    def push(self, audio: np.ndarray) -> None:
+        with self._lock:
+            self._chunks.append(audio)
+
+    def pull(self, frames: int) -> np.ndarray:
+        """Hasta ``frames`` muestras; si no hay suficientes, rellena con silencio (nunca bloquea)."""
+        out = np.zeros(frames, dtype=np.float32)
+        filled = 0
+        with self._lock:
+            while filled < frames and self._chunks:
+                head = self._chunks[0]
+                take = min(frames - filled, head.size - self._pos)
+                out[filled : filled + take] = head[self._pos : self._pos + take]
+                filled += take
+                self._pos += take
+                if self._pos >= head.size:
+                    self._chunks.popleft()
+                    self._pos = 0
+        return out
+
+    def clear(self) -> None:
+        with self._lock:
+            self._chunks.clear()
+            self._pos = 0
+
+
 class Player:
     """Reproduce trozos de audio en orden por el dispositivo elegido.
 
     WASAPI en modo compartido solo acepta la frecuencia del dispositivo (normalmente 48 kHz), mientras que
     las voces sintetizadas salen a 16–24 kHz: cada trozo se remuestrea a la frecuencia del dispositivo.
+
+    La reproducción es por **callback** con un colchón propio (``_FIFO``): PortAudio pide audio
+    cuando lo necesita y recibe silencio si aún no hay (nunca espera). Antes se usaba ``stream.write``
+    bloqueante con un flujo mono sobre un dispositivo estéreo y latencia mínima, un patrón de WASAPI
+    que da micro-cortes sin reportarlos y suena «robótico»; el navegador no los tiene porque usa su
+    propio motor de audio.
     Los errores se informan por ``on_error`` en lugar de matar el hilo en silencio.
     """
+
+    LATENCY_S = 0.12  # colchón del dispositivo: lo bastante grande para no cortarse, sin retrasar de más
 
     def __init__(
         self,
@@ -138,19 +181,42 @@ class Player:
         self._on_error = on_error
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._fifo = _FIFO()
         self.played_chunks = 0
+        self.underflows = (
+            0  # veces que el dispositivo pidió audio y no había (silencio entre frases también cuenta)
+        )
         self._scheduled_end = 0.0
         self.busy_until = 0.0  # time.monotonic() en que termina de sonar lo ya encolado (+ cola de eco)
 
+    def _device_info(self) -> dict:
+        return self._sd.query_devices(self.device if self.device is not None else self._sd.default.device[1])
+
     def _device_rate(self) -> int:
-        info = self._sd.query_devices(self.device if self.device is not None else self._sd.default.device[1])
-        return int(info["default_samplerate"])
+        return int(self._device_info()["default_samplerate"])
+
+    def _callback(self, outdata: np.ndarray, frames: int, time_info, status) -> None:  # noqa: ANN001
+        mono = self._fifo.pull(frames)
+        outdata[:] = mono.reshape(-1, 1)  # el mismo audio en todos los canales (altavoz o auricular estéreo)
+        if status and getattr(status, "output_underflow", False):
+            self.underflows += 1
 
     def _run(self) -> None:
         stream: Any = None
         try:
-            rate = self._device_rate()
-            stream = self._sd.OutputStream(device=self.device, channels=1, samplerate=rate, dtype="float32")
+            info = self._device_info()
+            rate = int(info["default_samplerate"])
+            channels = (
+                2 if int(info.get("max_output_channels", 2)) >= 2 else 1
+            )  # estéreo: sin conversión rara de mono
+            stream = self._sd.OutputStream(
+                device=self.device,
+                channels=channels,
+                samplerate=rate,
+                dtype="float32",
+                latency=self.LATENCY_S,
+                callback=self._callback,
+            )
             stream.start()
             while not self._stop.is_set():
                 chunk = self._get_audio(0.1)
@@ -160,7 +226,7 @@ class Player:
                 now = time.monotonic()
                 self._scheduled_end = max(self._scheduled_end, now) + audio.size / rate
                 self.busy_until = self._scheduled_end + ECHO_TAIL_S
-                stream.write(audio.reshape(-1, 1))
+                self._fifo.push(audio)
                 self.played_chunks += 1
         except Exception as exc:  # noqa: BLE001 - se informa y se registra, no se pierde en silencio
             log.exception("Fallo del reproductor de audio")
@@ -183,6 +249,7 @@ class Player:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(2.0)
+        self._fifo.clear()
 
 
 def _resample_audio(audio: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:

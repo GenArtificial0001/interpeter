@@ -341,3 +341,20 @@ de aceptación, archivos a tocar y riesgos. Decisiones abiertas con la persona e
   intervenciones del vigilante y la transcripción con Copiar / Guardar / Limpiar.
 - **Pendiente / no hecho:** la variante «oscura» opcional de Ford Blue; el panel de ajustes anclado al orbe (§17); sustituir «Historial» del orbe
   (la persona debe elegir; recomendado «Idiomas ⇄»). No verificado en la pantalla real de la persona (solo imágenes de prueba).
+
+## 23. Salida de audio por dispositivo «robótica» (0.8.1)
+
+Síntoma: por el micrófono virtual del navegador la voz sonaba perfecta, pero por un dispositivo (auricular ↔ altavoces
+de la PC, en ambos sentidos) sonaba robótica, con todas las voces. No es la GPU (solo se usa para el encoder de Whisper;
+la síntesis corre en CPU).
+
+Causa probable: `Player` usaba `stream.write` bloqueante, flujo **mono** sobre un dispositivo estéreo (WASAPI compartido)
+y latencia mínima. Los micro-cortes de ese patrón no se reportan como `output_underflow` y suenan «robóticos».
+
+Cambio (`audio/io.py`): `Player` ahora usa un `OutputStream` por **callback** con un colchón propio (`_FIFO`), estéreo si el
+dispositivo tiene ≥2 salidas y `latency=0.12 s`. Si falta audio entrega silencio en vez de esperar. `busy_until` (anti-eco)
+se calcula igual. Tests: `tests/test_player.py` (callback simulado, `_FIFO`, estéreo/mono).
+
+Sin verificar de oído (los tests no suenan en altavoces reales). Si sigue robótico, pedir: perfil de voz, micrófono y salida
+usados, y probar otra salida; sospechar de Bluetooth en modo «manos libres» (HFP, 16 kHz) cuando el auricular también
+hace de micrófono, de las «mejoras de audio» de Windows o de usar la entrada MME en vez de WASAPI.

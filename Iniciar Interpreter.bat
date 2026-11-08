@@ -1,5 +1,5 @@
 @echo off
-rem VERSIONES: app 0.8.0 | extension del navegador 0.3.3  (actualizar junto con __init__.py y manifest.json)
+rem VERSIONES: app 0.8.1 | extension del navegador 0.3.3  (actualizar junto con __init__.py y manifest.json)
 rem Inicia Interpreter sin ventana de consola. Los registros quedan en logs\interpreter.log
 rem Usa .venv-clone (tiene los modelos de voz clonada) y, si no existe, .venv.
 setlocal
