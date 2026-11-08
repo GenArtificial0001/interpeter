@@ -110,3 +110,26 @@ def test_adaptativo_el_umbral_sigue_al_ruido_y_respeta_los_limites():
     assert vad.threshold_db == vad.min_db  # nunca por debajo del mínimo
     vad2 = AdaptiveEnergyVAD(initial_floor_db=-20.0)
     assert vad2.threshold_db == vad2.max_db  # nunca por encima del máximo
+
+
+def test_un_enunciado_largo_se_cierra_en_la_primera_pausa_corta_pasados_5_segundos():
+    seg = make()
+    # 6 s de voz, una pausa de 250 ms (menor que la pausa normal de 480 ms) y más voz
+    out = seg.feed(silence(300)) + seg.feed(tone(6000)) + seg.feed(silence(250)) + seg.feed(tone(2000))
+    assert len(out) == 1  # se cerró en la pausa corta, sin esperar los 480 ms
+    assert out[0].audio.size > 5.5 * SR
+    rest = seg.feed(silence(800))
+    assert len(rest) == 1  # y lo que siguió es otro enunciado
+
+
+def test_una_pausa_corta_antes_de_5_segundos_no_parte_la_frase():
+    seg = make()
+    out = seg.feed(silence(300)) + seg.feed(tone(3000)) + seg.feed(silence(250)) + seg.feed(tone(2000))
+    assert out == []  # sigue siendo el mismo enunciado
+
+
+def test_el_corte_forzado_no_se_come_el_final_de_la_voz():
+    seg = make()
+    out = seg.feed(silence(300)) + seg.feed(tone(14000))  # sin una sola pausa
+    assert len(out) >= 1
+    assert out[0].audio.size >= 11.9 * SR  # antes se recortaban 240 ms de voz real al cortar

@@ -261,3 +261,12 @@ def test_sin_glosario_el_flujo_no_cambia():
     finally:
         p.stop()
     assert mt.seen == ["Abre SharePoint"]
+
+
+def test_split_sentences_parte_por_frases_sin_romper_cifras_ni_siglas():
+    from interpreter.stages.backends import split_sentences
+
+    assert split_sentences("Hello there. How are you? Fine!") == ["Hello there.", "How are you?", "Fine!"]
+    assert split_sentences("Meet at 8.30 a.m. at dock three.") == ["Meet at 8.30 a.m. at dock three."]
+    assert split_sentences("One sentence only.") == ["One sentence only."]
+    assert split_sentences("  ") == [""]

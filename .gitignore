@@ -41,3 +41,4 @@ speech-to-speech-main/
 .vscode/
 Thumbs.db
 .DS_Store
+glossary.json

@@ -320,6 +320,25 @@ window.__lab = {
   },
   pico(i) { return this.meds[i].pico(); },
   reiniciar(i) { this.meds[i].reiniciar(); return true; },
+  async loopback(i, dtx) {   // «llamada»: la pista virtual viaja por WebRTC (Opus) y se mide lo que llega al otro lado
+    const track = this.streams[i].getAudioTracks()[0];
+    const a = new RTCPeerConnection(), b = new RTCPeerConnection();
+    a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+    b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+    const remoto = new Promise((ok) => { b.ontrack = (e) => ok(new MediaStream([e.track])); });
+    a.addTrack(track, this.streams[i]);
+    const dtxSdp = (sdp) => (dtx ? sdp.replace('minptime=10', 'minptime=10;usedtx=1') : sdp);
+    const offer = await a.createOffer(); offer.sdp = dtxSdp(offer.sdp);
+    await a.setLocalDescription(offer); await b.setRemoteDescription(offer);
+    const ans = await b.createAnswer(); ans.sdp = dtxSdp(ans.sdp);
+    await b.setLocalDescription(ans); await a.setRemoteDescription(ans);
+    const rs = await remoto;
+    const el = document.createElement('audio'); el.autoplay = true; el.srcObject = rs; document.body.appendChild(el);
+    const j = this.streams.push(rs) - 1;
+    this.meds[j] = await window.__medidor(rs);
+    (this.pcs = this.pcs || []).push(a, b);
+    return j;
+  },
   iniciarGrab(i) { return this.meds[i].iniciar(); },
   terminarGrab(i) { return this.meds[i].terminar(); },
 };
@@ -1152,6 +1171,46 @@ def esc6_continuidad(lab: Lab) -> None:
         tab.close()
 
 
+def esc7_llamada_webrtc(lab: Lab) -> None:
+    """La voz real pasa por una «llamada» WebRTC/Opus (con y sin supresión de silencios, DTX) sin perder el inicio."""
+    import wave
+
+    rep = lab.rep
+    with wave.open(str(CLIP_VOZ)) as w:
+        rate = w.getframerate()
+        ref = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768
+    for dtx in (False, True):
+        tab = open_tab(lab, lab.lab_url)
+        try:
+            esperar_puente(tab)
+            r = tab.ev("__lab.pedirSeguro({audio:true}, false)")
+            if r.get("error"):  # type: ignore[union-attr]
+                rep.add(f"(7) llamada WebRTC (DTX={dtx})", False, f"error={r['error']}", info=True)  # type: ignore[index]
+                continue
+            j = tab.ev(f"__lab.loopback({r['i']}, {str(dtx).lower()})", timeout=30)  # type: ignore[index]
+            time.sleep(2.0)  # que la «llamada» se estabilice (con DTX, el silencio inicial ya está en modo cómodo)
+            resultados = []
+            for _ in range(3):
+                wait_for(lambda: lab.server.receivers >= 1, 5, 0.02)
+                tab.ev(f"__lab.iniciarGrab({j})")
+                lab.server.push(ref, rate)
+                time.sleep(len(ref) / rate + 2.5)
+                data = tab.ev(f"__lab.terminarGrab({j})", timeout=30)
+                rec = np.asarray(data["samples"], dtype=np.float32) / 32767  # type: ignore[index]
+                resultados.append(analizar_continuidad(ref, rate, rec, int(data["rate"])))  # type: ignore[index]
+                lab.server.flush()
+                time.sleep(3.0)  # silencio entre frases: con DTX la «llamada» vuelve a ruido de confort
+            malos = [x for x in resultados if "error" in x or x["hueco_total_ms"] > 40]
+            rep.add(
+                f"(7) llamada WebRTC/Opus con DTX={'sí' if dtx else 'no'}: la voz llega sin huecos",
+                not malos,
+                f"resultados={resultados}",
+                info=True,  # informativa: mide, no condiciona PASA/FALLA
+            )
+        finally:
+            tab.close()
+
+
 # -- Una ejecución contra un navegador ---------------------------------------------------------------
 
 
@@ -1447,6 +1506,7 @@ def run_browser(
         escenario(lab, "4) cambio de dispositivo por deviceId", esc4_cambio_de_dispositivo)
         escenario(lab, "5) dos pestañas", esc5_dos_pestanas)
         escenario(lab, "6) continuidad con voz real", esc6_continuidad)
+        escenario(lab, "7) llamada WebRTC con voz real", esc7_llamada_webrtc)
 
         # Errores del service worker / de la página
         cdp.pump(0.2)

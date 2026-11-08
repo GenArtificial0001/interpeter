@@ -79,6 +79,11 @@ class VadConfig:
     end_silence_ms: int = 480  # pausa que cierra un enunciado
     pad_ms: int = 320  # audio previo conservado al detectar el inicio
     max_speech_ms: int = 12000  # corte forzado de enunciados larguísimos
+    # Enunciado largo: tras ``soft_split_ms`` de voz se cierra en la primera pausa corta
+    # (``soft_silence_ms``), un corte natural. Así no se acumulan frases de 10 s (reconocer y traducir
+    # tardaría mucho) ni hay que cortar una palabra por la mitad.
+    soft_split_ms: int = 5000
+    soft_silence_ms: int = 200
 
     @property
     def frame_samples(self) -> int:
@@ -140,13 +145,17 @@ class Segmenter:
         else:
             self._silence_frames += 1
 
-        too_long = len(self._speech) * self.cfg.frame_ms >= self.cfg.max_speech_ms
-        if self._silence_frames * self.cfg.frame_ms >= self.cfg.end_silence_ms or too_long:
+        speech_ms = len(self._speech) * self.cfg.frame_ms
+        silence_ms = self._silence_frames * self.cfg.frame_ms
+        too_long = speech_ms >= self.cfg.max_speech_ms
+        natural_break = speech_ms >= self.cfg.soft_split_ms and silence_ms >= self.cfg.soft_silence_ms
+        if silence_ms >= self.cfg.end_silence_ms or natural_break or too_long:
             return self._close(generation)
         return None
 
     def _close(self, generation: int) -> SpeechSegment | None:
         voiced_ms = self._speech_frames * self.cfg.frame_ms
+        trailing_silence = self._silence_frames
         audio = np.concatenate(self._speech) if self._speech else np.zeros(0, dtype=np.float32)
         self._speech = []
         self._in_speech = False
@@ -155,8 +164,9 @@ class Segmenter:
         self._pad.clear()
         if voiced_ms < self.cfg.min_speech_ms:
             return None
-        # Recorta el silencio final: el fin de habla real es antes de la pausa que lo confirmó.
-        trim = self.cfg.end_silence_ms // self.cfg.frame_ms * self.cfg.frame_samples // 2
+        # Recorta la mitad del silencio final (la voz terminó antes de la pausa que lo confirmó). Solo el
+        # silencio que HAY: un corte sin pausa (enunciado larguísimo) no debe comerse el final de una palabra.
+        trim = trailing_silence * self.cfg.frame_samples // 2
         if audio.size > trim:
             audio = audio[: audio.size - trim]
         return SpeechSegment(audio, self.cfg.sample_rate, generation, Timings())

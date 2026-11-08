@@ -213,7 +213,7 @@ def test_el_reproductor_del_navegador_envia_cada_trozo_y_vacia_al_parar():
 def test_avisa_una_sola_vez_si_no_hay_navegador_conectado():
     errores = []
     srv = FakeServer(entregados=0)
-    p = WebMicPlayer(srv, feeder([chunk(), chunk(), chunk()]), on_error=errores.append)
+    p = WebMicPlayer(srv, feeder([chunk(), chunk(), chunk()]), on_error=errores.append, grace_s=0)
     p.start()
     assert wait_for(lambda: p.undelivered == 3)
     p.stop()
@@ -222,7 +222,7 @@ def test_avisa_una_sola_vez_si_no_hay_navegador_conectado():
 
 def test_vuelve_a_avisar_tras_reconectar_y_perder_otra_vez():
     errores, srv = [], FakeServer(entregados=0)
-    p = WebMicPlayer(srv, feeder([chunk()]), on_error=errores.append)
+    p = WebMicPlayer(srv, feeder([chunk()]), on_error=errores.append, grace_s=0)
     p.start()
     assert wait_for(lambda: len(errores) == 1)
     srv.entregados = 1
@@ -405,3 +405,28 @@ def test_la_version_esperada_sale_del_manifest_del_proyecto():
             )
         )["version"]
     )
+
+
+def test_si_justo_no_hay_pestana_la_frase_se_reintenta_y_se_entrega_al_reconectar():
+    srv = FakeServer(entregados=0)
+    errores = []
+    p = WebMicPlayer(srv, feeder([chunk()]), on_error=errores.append, grace_s=2.0)
+    p.start()
+    time.sleep(0.3)  # la extensión se está reconectando: todavía no hay receptor
+    assert p.played_chunks == 0 and errores == []
+    srv.entregados = 1  # volvió
+    assert wait_for(lambda: p.played_chunks == 1, 3.0)
+    p.stop()
+    assert errores == [] and srv.pushes.count((2400, 24000)) >= 1
+
+
+def test_pasada_la_gracia_se_avisa_y_las_siguientes_frases_no_esperan_otra_vez():
+    srv = FakeServer(entregados=0)
+    errores = []
+    p = WebMicPlayer(srv, feeder([chunk(), chunk(), chunk()]), on_error=errores.append, grace_s=0.3)
+    t0 = time.time()
+    p.start()
+    assert wait_for(lambda: p.undelivered == 3, 3.0)
+    p.stop()
+    assert time.time() - t0 < 1.5  # solo la primera esperó la gracia
+    assert len(errores) == 1

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import warnings
 from collections.abc import Iterator
@@ -192,6 +193,12 @@ class WhisperSTT(STTBackend):
             text[:90],
         )
         return "" if self.last_reject else text
+
+
+def split_sentences(text: str) -> list[str]:
+    """Parte un texto en frases (tras ``. ! ?`` y un espacio). Las cifras («8.30») y siglas no se parten."""
+    parts = re.split(r"(?<=[.!?])\s+(?=[\"'¿¡(]?[A-ZÁÉÍÓÚÑ0-9])", text.strip())
+    return [p for p in (x.strip() for x in parts) if p] or [text.strip()]
 
 
 def clean_translation(text: str) -> str:
@@ -386,8 +393,10 @@ class YourTTSClone(TTSBackend):
             raise ValueError(
                 f"El perfil clonado rápido solo habla inglés, francés y portugués ({language!r})."
             )
-        wav = self._tts.tts(text=text, speaker_wav=self.reference, language=code)
-        yield np.asarray(wav, dtype=np.float32)
+        # Frase por frase: la primera se oye mientras se sintetizan las demás (la primera voz sale antes).
+        for sentence in split_sentences(text):
+            wav = self._tts.tts(text=sentence, speaker_wav=self.reference, language=code)
+            yield np.asarray(wav, dtype=np.float32)
 
 
 class XTTSClone(TTSBackend):

@@ -76,7 +76,7 @@ conexiones de ese ID: otra extensión, o cualquier página web, es rechazada. Si
 |---|---|
 | Teams en el navegador (Edge, Chrome) | Funciona: confirmado en una reunión real (aparece el micrófono y el medidor reacciona) |
 | Google Meet en el navegador | Funciona: confirmado en una reunión real (Meet reconoce «Interpreter (voz traducida)» como micrófono) |
-| Zoom en el navegador (`app.zoom.us/wc/…`) | Funciona: confirmado en una reunión real (extensión 0.3.2) |
+| Zoom en el navegador (`app.zoom.us/wc/…`) | Funciona: confirmado en una reunión real (extensión 0.3.3) |
 | **Teams o Zoom de escritorio** | **No**: no son páginas web. Para eso hace falta el cable o VB-Cable |
 
 ## Versión

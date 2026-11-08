@@ -7,6 +7,7 @@
 
   let port = null;
   let heartbeat = null;
+  let reconnects = 0;
 
   function toPage(msg, transfer) {
     window.postMessage({ __interpreter: 1, ...msg }, "*", transfer || []);
@@ -27,6 +28,7 @@
       return;
     }
     port.onMessage.addListener((m) => {
+      reconnects = 0; // el puerto funciona: el siguiente corte empieza de nuevo con espera corta
       if (m.t === "pcm") {
         const buffer = base64ToBuffer(m.b);
         toPage({ type: "pcm", rate: m.r, buffer }, [buffer]);
@@ -40,7 +42,9 @@
       port = null;
       clearInterval(heartbeat);
       toPage({ type: "status", connected: false });
-      setTimeout(connect, 1000);
+      // Reconexión casi inmediata (el service worker pudo reiniciarse): cada segundo sin puerto es audio perdido.
+      reconnects = Math.min(reconnects + 1, 5);
+      setTimeout(connect, 100 * reconnects);
     });
     clearInterval(heartbeat);
     heartbeat = setInterval(() => {

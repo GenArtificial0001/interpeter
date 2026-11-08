@@ -5,7 +5,7 @@
 const WS_URL = "ws://127.0.0.1:8765";
 const ports = new Set();
 let ws = null;
-let retryMs = 1000;
+let retryMs = 250;
 let connected = false;
 
 function broadcast(msg) {
@@ -46,7 +46,7 @@ function setConnected(v) {
 
 function scheduleReconnect() {
   setTimeout(connect, retryMs);
-  retryMs = Math.min(retryMs * 2, 10000);
+  retryMs = Math.min(retryMs * 2, 3000);
 }
 
 function connect() {
@@ -59,7 +59,7 @@ function connect() {
     return;
   }
   me.binaryType = "arraybuffer";
-  me.onopen = () => { if (me !== ws) return; retryMs = 1000; setConnected(true); reportTabs(); };
+  me.onopen = () => { if (me !== ws) return; retryMs = 250; setConnected(true); reportTabs(); };
   me.onmessage = (ev) => {
     if (me !== ws) return;
     if (typeof ev.data === "string") {

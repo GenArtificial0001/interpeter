@@ -28,6 +28,7 @@ import logging
 import re
 import struct
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,11 @@ PROTOCOL_VERSION = 1
 DEFAULT_PORT = 8765
 HOST = "127.0.0.1"
 HEARTBEAT_S = 20.0  # el service worker MV3 se duerme tras 30 s sin mensajes: este latido lo mantiene vivo
-SEND_TIMEOUT_S = 0.5  # un cliente que tarda más en aceptar un trozo se considera atascado y se desconecta
+# Un cliente que tarda más que esto en aceptar un trozo se considera atascado y se desconecta. Con el equipo
+# cargado (reunión + modelos) el service worker puede tardar más de 0,5 s en leer una frase: expulsarlo
+# perdía la frase y hacía creer a Interpreter que no había pestañas hasta que se reconectaba.
+SEND_TIMEOUT_S = 4.0
+GRACE_S = 3.0  # cuánto se reintenta entregar una frase si justo no hay pestaña (reconexión de la extensión)
 MAX_CLIENTS = 8
 MAX_MESSAGE_BYTES = 2**12
 
@@ -322,10 +327,13 @@ class WebMicPlayer:
         server: WebMicServer,
         get_audio: Callable[[float], object | None],
         on_error: Callable[[str], None] | None = None,
+        grace_s: float = GRACE_S,
     ) -> None:
         self._server = server
         self._get_audio = get_audio
         self._on_error = on_error
+        self._grace_s = grace_s
+        self._outage = False  # la última frase no se pudo entregar ni con reintentos: no se espera de nuevo
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.played_chunks = 0
@@ -338,7 +346,7 @@ class WebMicPlayer:
             chunk = self._get_audio(0.1)
             if chunk is None:
                 continue
-            delivered = self._server.push(chunk.audio, chunk.sample_rate)  # type: ignore[attr-defined]
+            delivered = self._deliver(chunk)
             if delivered:
                 self.played_chunks += 1
                 self._warned = False
@@ -350,6 +358,20 @@ class WebMicPlayer:
                         "La traducción está lista pero ninguna pestaña de Teams/Meet la recibe: abre la "
                         "reunión en el navegador con la extensión de Interpreter instalada."
                     )
+
+    def _deliver(self, chunk: object) -> int:
+        """Envía el trozo; si no hay receptor (la extensión se reconecta), reintenta unos segundos."""
+        audio, rate = chunk.audio, chunk.sample_rate  # type: ignore[attr-defined]
+        delivered = self._server.push(audio, rate)
+        if delivered or self._outage or self._grace_s <= 0:
+            self._outage = not delivered and self._outage
+            return delivered
+        deadline = time.monotonic() + self._grace_s
+        while not delivered and not self._stop.is_set() and time.monotonic() < deadline:
+            self._stop.wait(0.05)
+            delivered = self._server.push(audio, rate)
+        self._outage = not delivered
+        return delivered
 
     def start(self) -> None:
         self._stop.clear()
