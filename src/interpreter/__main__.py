@@ -43,6 +43,15 @@ def setup_logging(home: Path) -> Path:
     return logfile
 
 
+def ui_mode_from_args(argv: list[str]) -> str | None:
+    """``--orb`` abre siempre en modo orbe (lo usa Visión); ``--clasica`` fuerza la ventana clásica."""
+    if "--orb" in argv:
+        return "orb"
+    if "--clasica" in argv:
+        return "classic"
+    return None
+
+
 def shutdown(engine: object, code: int = 0, grace_s: float = 5.0) -> None:
     """Cierra TODO al salir: el motor, el servidor del micrófono virtual (puerto 8765) y los auxiliares.
 
@@ -79,8 +88,10 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("Interpreter")
-    win = MainWindow()
-    win.show()
+    mode = ui_mode_from_args(sys.argv[1:])
+    win = MainWindow(ui_mode=mode)
+    if not win.starts_in_orb:
+        win.show()  # en modo orbe se muestra solo el orbe (sin parpadeo de la ventana clásica)
     code = app.exec()
     shutdown(win.engine, code)
     return code

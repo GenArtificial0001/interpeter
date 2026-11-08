@@ -33,7 +33,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QMenu, QWidget
 
-SIZE = 560
+SIZE = 480  # tamaño inicial (la rueda del ratón lo cambia entre 320 y 900)
 BARS = 96
 TICKS = 90
 VU_STEPS = 24  # pasos de la barra de escucha (animación «ligera»: solo se repinta si cambia el paso)
@@ -187,11 +187,11 @@ class OrbWindow(QWidget):
 
     def button_rects(self) -> dict[str, QRectF]:
         u, c = self._unit(), self._center()
-        w, h = u * 0.27, u * 0.24
-        return {  # dentro de los anillos, a los lados y debajo del orbe (como en el diseño)
+        w, h = u * 0.26, u * 0.22
+        return {  # dentro del anillo grande (radio 0,52): a los lados y debajo del orbe, como en el diseño
             "settings": QRectF(c.x() - u * 0.41 - w / 2, c.y() - h / 2, w, h),
             "history": QRectF(c.x() + u * 0.41 - w / 2, c.y() - h / 2, w, h),
-            "mic": QRectF(c.x() - w / 2, c.y() + u * 0.40, w, h),
+            "mic": QRectF(c.x() - w / 2, c.y() + u * 0.285, w, h),
         }
 
     def hit_test(self, pos: QPointF) -> str:
@@ -464,25 +464,33 @@ class OrbWindow(QWidget):
         p.setBrush(dot)
         p.drawEllipse(c, r * 0.07, r * 0.07)
 
+    @staticmethod
+    def _font(px: float, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
+        """Fuente de ``px`` píxeles (proporcional al orbe: no crece con el escalado de pantalla)."""
+        f = QFont("Segoe UI")
+        f.setPixelSize(max(8, int(px)))
+        f.setWeight(weight)
+        return f
+
     def _draw_texts(self, p: QPainter, c: QPointF, u: float, accent: QColor) -> None:
-        title = QFont("Segoe UI", max(9, int(u * 0.052)), QFont.Weight.Bold)
+        title = self._font(u * 0.066, QFont.Weight.Bold)
         p.setFont(title)
         p.setPen(QColor("#ffffff"))
         p.drawText(
-            QRectF(c.x() - u * 0.5, c.y() - u * 0.455, u * 1.0, u * 0.09),
+            QRectF(c.x() - u * 0.5, c.y() - u * 0.44, u * 1.0, u * 0.08),
             Qt.AlignmentFlag.AlignCenter,
             TITLES[self.mood],
         )
-        sub = QFont("Segoe UI", max(8, int(u * 0.046)), QFont.Weight.DemiBold)
+        sub = self._font(u * 0.055, QFont.Weight.DemiBold)
         p.setFont(sub)
         p.setPen(QColor(accent).lighter(135))
         p.drawText(
-            QRectF(c.x() - u * 0.5, c.y() - u * 0.385, u * 1.0, u * 0.08),
+            QRectF(c.x() - u * 0.5, c.y() - u * 0.365, u * 1.0, u * 0.07),
             Qt.AlignmentFlag.AlignCenter,
             f"{self.src_name} → {self.dst_name}",
         )
         if self.caption:
-            cap = QFont("Segoe UI", max(8, int(u * 0.04)))
+            cap = self._font(u * 0.058)
             p.setFont(cap)
             box = QRectF(c.x() - u * 0.62, c.y() + u * 0.70, u * 1.24, u * 0.17)
             p.setPen(Qt.PenStyle.NoPen)
@@ -498,7 +506,7 @@ class OrbWindow(QWidget):
     def _draw_buttons(self, p: QPainter, accent: QColor) -> None:
         rects = self.button_rects()
         labels = {"settings": "Ajustes", "history": "Historial", "mic": "Micrófono"}
-        font = QFont("Segoe UI", max(7, int(self._unit() * 0.042)), QFont.Weight.DemiBold)
+        font = self._font(self._unit() * 0.056, QFont.Weight.DemiBold)
         for name, rect in rects.items():
             col = QColor("#ffffff")
             if name == "mic" and self.muted:
@@ -507,7 +515,7 @@ class OrbWindow(QWidget):
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
-            icon_area = QRectF(rect.x(), rect.y(), rect.width(), rect.height() * 0.62)
+            icon_area = QRectF(rect.x(), rect.y(), rect.width(), rect.height() * 0.58)
             {"settings": self._icon_gear, "history": self._icon_clock, "mic": self._icon_mic}[name](
                 p, icon_area
             )
@@ -515,7 +523,7 @@ class OrbWindow(QWidget):
             p.setPen(col)
             p.drawText(
                 QRectF(
-                    rect.x() - 10, rect.y() + rect.height() * 0.60, rect.width() + 20, rect.height() * 0.45
+                    rect.x() - 12, rect.y() + rect.height() * 0.58, rect.width() + 24, rect.height() * 0.42
                 ),
                 Qt.AlignmentFlag.AlignCenter,
                 labels[name],

@@ -11,7 +11,7 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.5.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+- **Versiones al cierre:** app **0.5.1**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
   en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
@@ -39,6 +39,11 @@ verificado o como hipótesis.
 > menú activa/silencia. Cerrar la aplicación detiene el servidor del micrófono virtual (puerto 8765) y, si algo se cuelga,
 > fuerza el fin del proceso a los 5 s (`__main__.shutdown`). Las pruebas usan un micrófono FALSO (`tests/conftest.py`):
 > **nunca** se probó escribir en el micrófono real; la lectura real sí (laptop: «Microphone Array», 94 %).
+
+> 0.5.1: iconos y textos del orbe más pequeños y dentro del anillo (fuentes en píxeles relativos al orbe, tamaño inicial
+> 480); **`--orb`** abre siempre en modo orbe (lo usará Visión: `Iniciar Interpreter.bat --orb`), **`--clasica`** fuerza la
+> ventana clásica; sin argumentos, la última vista usada. Los `.bat` pasan los argumentos (`%*`). Si el orbe no puede abrirse,
+> se muestra la ventana clásica (nunca queda invisible). Pregunta abierta del usuario: consolidar TODO dentro del orbe (§17).
 
 ## 2. Línea de tiempo (commits relevantes en `dev`)
 
@@ -261,3 +266,35 @@ lanzándose con `Iniciar Interpreter.bat`; no cambia nada de lo que usa la perso
 - **No verificado:** cómo se ve y se siente en la pantalla real de la persona (solo se dibujó en pruebas), el consumo de CPU
   durante una reunión, varios monitores / escalado de pantalla alto, y el comportamiento con la barra de tareas.
 - Las barras se mueven con el nivel real del micrófono; su forma por barra es un perfil fijo decorativo (no es un espectro real).
+
+## 17. ¿Todo dentro del orbe? (propuesta, aún no hecho)
+
+La persona quiere una sola interfaz: el orbe, abierto siempre cuando lo llama Visión. Es viable y lógico, por fases:
+1. **Hecho (0.5.1):** `--orb`, orbe más pequeño y legible.
+2. **Siguiente:** «Ajustes» abre un **panel anclado junto al orbe** (tarjeta translúcida con el mismo estilo) con pestañas
+   Idiomas · Audio (micrófono, volumen, salida) · Voz (perfil y voz hombre/mujer) · Avanzado (pausa, aceleración,
+   glosario, grabar voz). Reutiliza los widgets existentes de `MainWindow` (sin duplicar lógica) montados en un contenedor sin marco.
+3. **Después:** «Historial» como panel con la transcripción; avisos y errores como burbujas junto al orbe.
+4. La ventana clásica queda como respaldo («Ajustes avanzados») hasta que el panel cubra todo.
+Riesgo: ventanas translúcidas con widgets dentro (texto sin suavizado ClearType, foco/teclado). Mitigación: el panel es
+una ventana aparte con fondo opaco redondeado, no parte del orbe transparente.
+
+## 18. Notas de diseño del usuario sobre el orbe (para la próxima iteración)
+
+Estado de cada nota (2026-11-08):
+| Nota | Estado |
+|---|---|
+| El rendimiento del intérprete manda; si no, dejar solo la barra de escucha como animación | Hecho (animación «ligera» por defecto, 0,4 % de un núcleo) |
+| La barra verde de volumen pasa a ser la «onda» alrededor del ojo; que sea circular | Hecho (marcas blancas que se encienden de arriba a los lados) |
+| Activar el micrófono y cambiar su volumen como en la configuración de audio de Visión | Hecho (`audio/sysmic.py`; ventana clásica + rueda en el orbe) |
+| El botón de cerrar debe cerrar todo, incluido el servidor (sin puertos abiertos) | Hecho (`__main__.shutdown` + prueba) |
+| Iconos y letras demasiado grandes, sobresalen del círculo | Hecho en 0.5.1 (fuentes en píxeles relativos, 480 px) |
+| Cuando lo llame Visión, abrir siempre en modo orbe | Hecho (`--orb`; Visión debe lanzar `Iniciar Interpreter.bat --orb`) |
+| Consolidar TODO dentro del orbe | Propuesto en §17; falta el panel de ajustes anclado |
+| **«Historial» está de más: reemplazarlo por algo más útil** | **Pendiente: elegir con la persona (ver abajo)** |
+
+Candidatos para reemplazar «Historial» (el botón del lado derecho del orbe), de más a menos útil en una reunión:
+1. **Idiomas (⇄):** cambiar de dirección o de idioma en un toque (Español→English ↔ English→Español); es lo que más se toca en vivo.
+2. **Voz:** elegir al instante voz de hombre o de mujer (hoy está escondido en la ventana clásica).
+3. **Glosario:** abrir el glosario o añadir un término rápido que acaba de salir mal.
+4. **Ver lo último dicho:** un subtítulo ya existe abajo del orbe, así que «Historial» solo se justifica si fuera algo distinto (p. ej. copiar la última frase).

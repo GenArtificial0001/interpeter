@@ -87,3 +87,11 @@ def test_shutdown_sigue_aunque_el_motor_falle(monkeypatch):
 
     monkeypatch.setattr(entry.threading, "Timer", FakeTimer)
     entry.shutdown(Motor())  # no debe lanzar
+
+
+def test_los_argumentos_eligen_la_vista_al_arrancar():
+    assert entry.ui_mode_from_args(["--orb"]) == "orb"
+    assert entry.ui_mode_from_args(["--clasica"]) == "classic"
+    assert entry.ui_mode_from_args([]) is None
+    assert entry.ui_mode_from_args(["--otra-cosa"]) is None
+    assert entry.ui_mode_from_args(["--orb", "--clasica"]) == "orb"  # si vienen los dos, manda el orbe

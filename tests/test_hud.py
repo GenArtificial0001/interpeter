@@ -501,3 +501,61 @@ def test_el_menu_del_orbe_activa_o_silencia_el_microfono_de_windows(app, setting
     win._orb.sys_mic_toggle_requested.emit()
     assert not mic_falso.muted
     win.close()
+
+
+# -- arrancar siempre en orbe (cuando lo llama Visión) ----------------------------------------------------
+
+
+def _esperar(app, cond, seg=2.0):
+    import time
+
+    end = time.time() + seg
+    while not cond() and time.time() < end:
+        app.processEvents()
+        time.sleep(0.01)
+    return cond()
+
+
+def test_con_orb_forzado_arranca_en_orbe_aunque_la_ultima_vista_fuera_la_clasica(app, settings):
+    settings.setValue("ui_mode", "classic")
+    win = MainWindow(_builder, settings=settings, load_on_start=False, voice_lister=lambda: [], ui_mode="orb")
+    assert win.starts_in_orb
+    assert _esperar(app, lambda: win._orb is not None and win._orb.isVisible())
+    assert not win.isVisible()
+    win.close()
+
+
+def test_con_clasica_forzada_no_se_abre_el_orbe_aunque_era_la_ultima(app, settings):
+    settings.setValue("ui_mode", "orb")
+    win = MainWindow(
+        _builder, settings=settings, load_on_start=False, voice_lister=lambda: [], ui_mode="classic"
+    )
+    assert not win.starts_in_orb
+    app.processEvents()
+    assert win._orb is None
+    win.close()
+
+
+def test_si_el_orbe_falla_al_arrancar_se_muestra_la_ventana_clasica(app, settings, monkeypatch):
+    win = MainWindow(_builder, settings=settings, load_on_start=False, voice_lister=lambda: [], ui_mode="orb")
+
+    def roto():
+        raise RuntimeError("el orbe no pudo abrirse")
+
+    monkeypatch.setattr(win, "open_orb", roto)
+    win._open_orb_at_start()
+    assert win.isVisible() and win._orb is None  # nunca queda la aplicación invisible
+    win.close()
+
+
+def test_el_orbe_cabe_dentro_del_anillo_grande(app):
+    w = OrbWindow()
+    u, c = w._unit(), w._center()
+    for name, rect in w.button_rects().items():
+        for corner in (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight()):
+            d = ((corner.x() - c.x()) ** 2 + (corner.y() - c.y()) ** 2) ** 0.5
+            assert d <= u * 0.56, (
+                name,
+                d / u,
+            )  # iconos y letras dentro del círculo (el anillo grande mide 0,52)
+    assert w.width() == 480  # tamaño inicial más pequeño

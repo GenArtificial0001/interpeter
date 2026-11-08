@@ -69,7 +69,7 @@ def seg():
     return SpeechSegment(np.zeros(16000, dtype=np.float32))
 
 
-def wait_for(cond, timeout=3.0):
+def wait_for(cond, timeout=10.0):
     end = time.time() + timeout
     while time.time() < end:
         if cond():

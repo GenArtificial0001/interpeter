@@ -196,6 +196,7 @@ class MainWindow(QMainWindow):
         glossary_path: Path | None = None,
         voice_lister: Callable[[], list[SapiVoice]] = installed_sapi_voices,
         mic_control: Any = sysmic,
+        ui_mode: str | None = None,
     ) -> None:
         super().__init__()
         self._mic_control = mic_control  # lista, activa/silencia y sube/baja el micrófono de Windows
@@ -264,10 +265,11 @@ class MainWindow(QMainWindow):
         self._on_state(EngineState.IDLE, "")
         if load_on_start:
             self.reload_models()
-        if str(self._settings.value("ui_mode", "classic", type=str)) == "orb":
-            QTimer.singleShot(
-                0, self.open_orb
-            )  # la última vez usaste el orbe: se abre solo (menú: «ventana clásica»)
+        # ``ui_mode`` fuerza la vista («orb» o «classic», p. ej. desde Visión); sin él, la última que se usó.
+        mode = ui_mode or str(self._settings.value("ui_mode", "classic", type=str))
+        self.starts_in_orb = mode == "orb"
+        if self.starts_in_orb:
+            QTimer.singleShot(0, self._open_orb_at_start)
 
     # -- construcción ------------------------------------------------------------------------------
 
@@ -1175,6 +1177,15 @@ class MainWindow(QMainWindow):
         self._orb.raise_()
         self.hide()
         self._settings.setValue("ui_mode", "orb")
+
+    def _open_orb_at_start(self) -> None:
+        """Abre el orbe al arrancar; si falla, la aplicación NO queda invisible: se muestra la clásica."""
+        try:
+            self.open_orb()
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo abrir el orbe: se usa la ventana clásica")
+            self._orb = None
+            self.show()
 
     def close_orb(self) -> None:
         orb, self._orb = self._orb, None

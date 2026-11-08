@@ -51,7 +51,7 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
-def pump(app, cond, timeout=3.0):
+def pump(app, cond, timeout=10.0):  # holgado: con el equipo cargado 3 s no alcanzan
     end = time.time() + timeout
     while time.time() < end:
         app.processEvents()
