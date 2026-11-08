@@ -364,3 +364,23 @@ hace de micrófono, de las «mejoras de audio» de Windows o de usar la entrada 
 El óvalo de Ford (`src/interpreter/ui/assets/ford-logo.png`, 360 px de ancho, reducido del original de 3500 px) está en la
 esquina derecha de la barra superior de Ajustes (`_ford_logo()` en `ui/window.py`, `MainWindow.lbl_logo`). Si el archivo
 falta, la ventana abre igual sin logo. `pyproject.toml` declara `assets/*.png` como dato del paquete.
+
+## 25. Instalador para otra máquina (0.9.0)
+
+`dist/Instalar Interpreter.exe` (~11 MB, no se versiona: `dist/` está en `.gitignore`) se genera con
+`.venv\Scripts\python scripts\build_installer.py`. Lleva dentro su propio Python (para ABRIR el instalador no hace falta
+nada) y la app en `payload.zip` (código, extensión, `.bat`, icono). Icono: `assets/interpreter.ico`, generado por
+`scripts/make_icon.py` desde `interpeter-icono.jpg` (círculo azul Ford `#0000FF`, exterior transparente).
+
+Código: `src/interpreter_setup/` (`core.py` lógica y funciones sueltas probables; `gui.py` ventana tkinter;
+`__main__.py` con `--cli [--verificar] [--dir] [--clone] [--sin-modelos] [--modelos-desde] [--proxy]`).
+Flujo: 1 verifica (Windows x64, disco, Python, índice de pip, Hugging Face) → 2 busca Python 3.11–3.13 (si no hay,
+`winget`/instalador de python.org solo para el usuario) → 3 copia la app y crea `.venv` → 4 `pip install -e ".[ml,ui,ov]"`
+(+`clone` opcional) con el índice que YA tenga el equipo (espejo de Ford; nunca `--index-url`) → 5 modelos (descarga
+de Hugging Face a `models/hf`, o copia desde una carpeta `models` de otra PC) → 6 comprueba los `import` y crea accesos
+directos (escritorio y menú Inicio) al `.bat`, con el icono. Registro en `logs/instalacion_<fecha>.log`.
+La app instalada usa `app_home()` = carpeta de instalación (instalación editable en modo desarrollo). XTTS no se
+descarga: exige aceptar la licencia de Coqui (`COQUI_TOS_AGREED=1`), decisión del usuario.
+Probado: tests (`tests/test_setup.py`), el `.exe` abre y lee la versión, y una instalación real parcial
+(extraer + venv + dependencias base + accesos). NO probado: instalación completa con torch/modelos en otra PC, ni la
+instalación automática de Python (depende del proxy/permisos de esa máquina).
