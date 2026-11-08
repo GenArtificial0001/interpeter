@@ -7,7 +7,7 @@ marcado «hecho». Orden recomendado de trabajo (el primero es un problema que l
 |---|---|---|---|
 | A | [`A-microfono-unificado.md`](A-microfono-unificado.md) | El micrófono «se apaga solo»; confusión entre «Silenciar» y «Micrófono de Windows activado»; recuperación automática | Solo especificada |
 | B | [`B-orbe-carga-sonido-retraso.md`](B-orbe-carga-sonido-retraso.md) | El ojo es el botón de iniciar; porcentaje de carga dentro del ojo; sonido futurista al terminar; retraso visible en el orbe | Solo especificada |
-| C | [`C-ajustes-rediseno.md`](C-ajustes-rediseno.md) | Formulario de Ajustes pequeño, con menú lateral y colores Ford Blue de Visión; categorías Idiomas, Audio, Voces y motor, Análisis | Solo especificada |
+| C | [`C-ajustes-rediseno.md`](C-ajustes-rediseno.md) | Formulario de Ajustes pequeño, con menú lateral y el estilo Ford Blue (claro, azul `#0000FF`) de Visión; categorías Idiomas, Audio, Voces y motor, Análisis | Solo especificada |
 
 Lo ya hecho y su estado están en [`../HANDOFF.md`](../HANDOFF.md) (§17 y §18). Reglas del proyecto en [`../../AGENTS.md`](../../AGENTS.md).
 
