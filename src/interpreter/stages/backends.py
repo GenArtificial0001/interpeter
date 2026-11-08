@@ -16,6 +16,7 @@ from typing import Any
 
 import numpy as np
 
+from ..numbers import is_numeric_phrase
 from .base import MTBackend, STTBackend, TTSBackend
 
 log = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ class WhisperSTT(STTBackend):
     min_avg_logprob = -1.0
     min_mixed_language_prob = 0.03  # frases con términos del glosario (mezcla de idiomas)
     min_mixed_logprob = -0.8
+    min_numeric_logprob = -0.5  # frases que son solo números
 
     def __init__(
         self, model: str = "openai/whisper-base", threads: int | None = None, quantize: bool = False
@@ -175,7 +177,9 @@ class WhisperSTT(STTBackend):
         mixed = (
             bool(found) and p_lang >= self.min_mixed_language_prob and avg_logprob >= self.min_mixed_logprob
         )
-        if p_lang < self.min_language_prob and not mixed:
+        # Los números sueltos («uno», «4, 5, 6») no parecen de ningún idioma: se aceptan si se oyen claros.
+        numeric = bool(text) and avg_logprob >= self.min_numeric_logprob and is_numeric_phrase(text, language)
+        if p_lang < self.min_language_prob and not (mixed or numeric):
             self.last_reject = "idioma"
         elif avg_logprob < self.min_avg_logprob:
             self.last_reject = "confianza"

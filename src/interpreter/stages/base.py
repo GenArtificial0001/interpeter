@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from ..messages import AudioChunk, SpeechSegment, Transcript, Translation
-from ..numbers import spell_numbers
+from ..numbers import is_digits_only, spell_numbers
 
 
 class STTBackend(ABC):
@@ -93,6 +93,8 @@ class MTStage:
 
     def _translate(self, source_text: str, source: str, target: str) -> str:
         """Traduce protegiendo los términos del glosario; si se pierde una marca, reintenta sin ella."""
+        if is_digits_only(source_text):  # NLLB inventa frases con solo cifras: se dejan tal cual para la voz
+            return source_text.strip()
         g = self.glossary
         if g:
             masked, mapping = g.protect(source_text, target)

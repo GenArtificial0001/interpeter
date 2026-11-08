@@ -634,6 +634,11 @@ class MainWindow(QMainWindow):
             text = f"La extensión está conectada, pero no hay ninguna pestaña de reunión abierta.{suffix}"
         else:
             text = "Esperando la extensión: abre Teams web con la extensión instalada."
+        if n:  # ya hay una pestaña que recibe: los avisos de «no hay pestaña» que quedaron son viejos
+            if "ninguna pestaña" in self.lbl_warning.text():
+                self._check_devices()
+            if "No hay ningún navegador" in self.lbl_loop.text():
+                self._set_loop_text("")
         self.lbl_browser.setText(text)
         self.lbl_browser.setStyleSheet(f"color:{theme.ACCENT};" if n else f"color:{theme.WARN};")
         self.lbl_browser.show()

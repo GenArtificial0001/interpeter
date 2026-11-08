@@ -1,3 +1,4 @@
+# ruff: noqa: SIM905
 """Cifras a palabras para la voz sintética.
 
 Los motores de voz (MMS-TTS, YourTTS, XTTS) no saben leer ``1, 2, 3``: descartan los símbolos que no están
@@ -184,3 +185,61 @@ def spell_numbers(text: str, lang: str) -> str:
     reader: Callable[[re.Match[str]], str] = lambda m: _read_number(m.group(0), lang, year_ok=True)  # noqa: E731
     text = re.sub(rf"{_NOT_WORD}{_NUM}{_AFTER}", reader, text)
     return re.sub(r"\s{2,}", " ", text).strip()
+
+
+# -- reconocer frases que son SOLO números (entrada) ------------------------------------------------------
+
+# fmt: off
+_NUMBER_WORDS = {
+    "es": (
+        "cero uno una dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce quince "
+        "dieciseis diecisiete dieciocho diecinueve veinte veintiuno veintidos veintitres veinticuatro "
+        "veinticinco veintiseis veintisiete veintiocho veintinueve treinta cuarenta cincuenta sesenta "
+        "setenta ochenta noventa cien ciento doscientos trescientos cuatrocientos quinientos seiscientos "
+        "setecientos ochocientos novecientos mil millon millones y"
+    ).split(),
+    "en": (
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+        "sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety "
+        "hundred thousand million and"
+    ).split(),
+    "pt": (
+        "zero um uma dois duas tres quatro cinco seis sete oito nove dez onze doze treze catorze quatorze "
+        "quinze dezesseis dezessete dezoito dezenove vinte trinta quarenta cinquenta sessenta setenta "
+        "oitenta noventa cem cento duzentos trezentos quatrocentos quinhentos seiscentos setecentos "
+        "oitocentos novecentos mil milhao milhoes e"
+    ).split(),
+    "fr": (
+        "zero un une deux trois quatre cinq six sept huit neuf dix onze douze treize quatorze quinze "
+        "seize vingt trente quarante cinquante soixante cent mille million millions et"
+    ).split(),
+}
+# fmt: on
+
+
+def is_numeric_phrase(text: str, lang: str) -> bool:
+    """¿La frase son solo números (cifras o palabras: «4, 5, 6», «uno», «cuarenta y dos»)?
+
+    Una palabra suelta como «dos» no se distingue de otro idioma (Whisper da menos de 0,15 de probabilidad de
+    que sea español) y el filtro de idioma la descartaría aunque se haya entendido perfectamente.
+    """
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKD", text.casefold())
+    plain = "".join(c for c in plain if not unicodedata.combining(c))
+    tokens = re.findall(r"\d+(?:[.,]\d+)*|[^\W\d_]+", plain)
+    if not tokens:
+        return False
+    words = set(_NUMBER_WORDS.get(lang, ()))
+    has_number = False
+    for t in tokens:
+        if t[0].isdigit() or (t in words and t not in {"y", "e", "et", "and"}):
+            has_number = True
+        elif t not in words:
+            return False
+    return has_number
+
+
+def is_digits_only(text: str) -> bool:
+    """¿Solo cifras y signos («11.23.53.22.», «4, 5, 6»)? El traductor inventa frases con eso."""
+    return bool(re.search(r"\d", text)) and not re.search(r"[^\W\d_]", text)

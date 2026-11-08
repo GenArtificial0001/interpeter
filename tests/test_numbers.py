@@ -74,3 +74,63 @@ def test_la_voz_recibe_las_cifras_ya_escritas():
     tl = Translation("The numbers are 1, 2, 3.", "es", "en")
     list(TTSStage(tts).process(tl))
     assert "1" not in tts.spoken[0] and "one" in tts.spoken[0]
+
+
+@pytest.mark.parametrize(
+    "texto,lang,esperado",
+    [
+        ("Uno.", "es", True),
+        ("¡Cuatro!", "es", True),
+        ("4, 5, 6.", "es", True),
+        ("Cuarenta y dos", "es", True),
+        ("treinta", "es", True),
+        ("Veintiséis", "es", True),
+        ("seven, eight", "en", True),
+        ("quatre-vingt", "fr", True),
+        ("Voy a listarte los números.", "es", False),
+        ("Uno de los mejores", "es", False),
+        ("Glos.", "es", False),
+        ("y", "es", False),
+        ("", "es", False),
+    ],
+)
+def test_frases_que_son_solo_numeros(texto, lang, esperado):
+    from interpreter.numbers import is_numeric_phrase
+
+    assert is_numeric_phrase(texto, lang) is esperado
+
+
+def test_solo_cifras_no_pasan_por_el_traductor_y_la_voz_las_lee():
+    from interpreter.numbers import is_digits_only
+    from interpreter.pipeline import Pipeline
+    from interpreter.stages.fakes import FakeMT, FakeSTT, FakeTTS
+
+    assert is_digits_only("11.23.53.22.") and is_digits_only("4, 5, 6") and not is_digits_only("cuatro 5")
+    assert not is_digits_only("hola")
+
+    visto: list[str] = []
+    traducciones: list[str] = []
+
+    class Mt(FakeMT):
+        def translate(self, text, source, target):
+            visto.append(text)
+            return "The Commission has not yet adopted a decision."  # lo que inventaba NLLB
+
+    p = Pipeline(
+        FakeSTT("11.23.53.22."), Mt(), FakeTTS(chunks=1), "es", "en", on_translation=traducciones.append
+    )
+    p.start()
+    try:
+        import numpy as np
+
+        from interpreter.messages import SpeechSegment
+
+        p.submit(SpeechSegment(np.zeros(16000, dtype=np.float32)))
+        import time
+
+        end = time.time() + 3
+        while not traducciones and time.time() < end:
+            time.sleep(0.02)
+    finally:
+        p.stop()
+    assert visto == [] and traducciones == ["11.23.53.22."]

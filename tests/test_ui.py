@@ -706,3 +706,18 @@ def test_la_version_se_ve_en_el_titulo_y_la_de_la_extension_en_el_aviso(app, set
     assert f"extensión v{expected_extension_version()}" in win.lbl_browser.text()
     assert "recárgala" not in win.lbl_browser.text()
     win.close()
+
+
+def test_los_avisos_viejos_de_pestana_se_borran_al_conectar_una(app, settings):
+    holder = {}
+    win = MainWindow(_builder_web(holder), settings=settings)
+    pump(app, lambda: win.btn_toggle.isEnabled())
+    _choose_browser(win)
+    win._show_warning(
+        "La traducción está lista pero ninguna pestaña de Teams/Meet la recibe: abre la reunión"
+    )
+    win._set_loop_text("No hay ningún navegador conectado.")
+    holder["srv"].clients = 1
+    win._on_webmic_clients(1)
+    assert win.lbl_warning.isHidden() and win.lbl_loop.isHidden()
+    win.close()
