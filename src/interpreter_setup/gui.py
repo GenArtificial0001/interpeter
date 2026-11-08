@@ -69,10 +69,16 @@ class SetupWindow(tk.Tk):
         self.var_proxy = tk.StringVar(value=os.environ.get("HTTPS_PROXY", ""))
 
         self._row(body, 0, "Instalar en", self.var_dir, self._pick_dir)
-        self._row(body, 1, "Modelos ya copiados (opcional)", self.var_from, self._pick_models)
-        self._row(body, 2, "Proxy (opcional)", self.var_proxy, None, hint=core.FORD_PROXY)
+        self._row(body, 1, "Copiar modelos desde otra PC (opcional)", self.var_from, self._pick_models)
+        tk.Label(
+            body,
+            text="Solo si ya bajaste los modelos en otra computadora: elige su carpeta «models» (en un pendrive o "
+            "en red) y se copian aquí en vez de descargarse. Si lo dejas vacío, se descargan de internet.",
+            bg="white", fg="#757E8C", font=("Segoe UI", 8), wraplength=620, justify="left",
+        ).grid(row=2, column=1, columnspan=2, sticky="w", pady=(0, 4))  # fmt: skip
+        self._row(body, 3, "Proxy (opcional)", self.var_proxy, None, hint=core.FORD_PROXY)
         opts = tk.Frame(body, bg="white")
-        opts.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        opts.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
         for text, var in (
             ("Descargar los modelos ahora (~6 GB)", self.var_models),
             ("Voz clonada (YourTTS, +3 GB)", self.var_clone),
