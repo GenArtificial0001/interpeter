@@ -260,15 +260,93 @@ def test_no_refresca_los_dispositivos_mientras_interpreta(app, settings):
     win.close()
 
 
-def test_ventana_chica_usa_scroll_y_no_aplasta_el_contenido(app, settings):
+def test_los_ajustes_son_una_ventana_pequena_con_menu_lateral_y_cuatro_paginas(app, settings):
     win = MainWindow(_builder, settings=settings)
     pump(app, lambda: win.btn_toggle.isEnabled())
-    win.resize(700, 500)
-    win.show()  # el área con scroll solo calcula su rango al mostrarse
+    assert win.width() <= 720 and win.height() <= 520  # pequeña, no pantalla completa
+    assert list(win._nav) == ["idiomas", "audio", "motor", "analisis"]
+    win.show()
     app.processEvents()
-    contenido = win.centralWidget().widget()
-    assert contenido.minimumSizeHint().height() > 500  # no cabe: debe desplazarse
-    assert win.centralWidget().verticalScrollBar().maximum() > 0
+    for key in win._nav:
+        win.show_page(key)
+        assert win._nav[key].isChecked() and win._stack.currentIndex() == win._page_index[key]
+        assert win.lbl_page.text()
+    # cada página tiene su propio desplazamiento: nada se aplasta aunque la ventana sea pequeña
+    from PySide6.QtWidgets import QScrollArea
+
+    assert all(isinstance(win._stack.widget(i), QScrollArea) for i in range(win._stack.count()))
+    win.close()
+
+
+def test_la_ultima_pagina_se_recuerda_y_el_boton_de_invertir_intercambia_los_idiomas(app, settings):
+    win = MainWindow(_builder, settings=settings, load_on_start=False)
+    win.show_page("audio")
+    assert settings.value("settings_page", "", type=str) == "audio"
+    win.close()
+    win2 = MainWindow(_builder, settings=settings, load_on_start=False)
+    assert win2._stack.currentIndex() == win2._page_index["audio"]
+    win2.cmb_source.setCurrentIndex(win2.cmb_source.findData("es"))
+    win2.cmb_target.setCurrentIndex(win2.cmb_target.findData("en"))
+    win2.cmb_profile.setCurrentIndex(win2.cmb_profile.findData("fast"))
+    win2.btn_swap.click()
+    assert (win2.cmb_source.currentData(), win2.cmb_target.currentData()) == ("en", "es")
+    win2.close()
+
+
+def test_invertir_no_cambia_nada_si_la_voz_elegida_no_habla_el_nuevo_destino(app, settings):
+    win = MainWindow(
+        _builder,
+        settings=settings,
+        load_on_start=False,
+        clone_is_available=True,
+        license_prompt=lambda *a: True,
+    )
+    win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("clone_fast"))
+    win.cmb_source.setCurrentIndex(win.cmb_source.findData("es"))  # YourTTS no habla español
+    win.cmb_target.setCurrentIndex(win.cmb_target.findData("en"))
+    win.btn_swap.click()
+    assert (win.cmb_source.currentData(), win.cmb_target.currentData()) == ("es", "en")
+    assert "no habla" in win.lbl_warning.text()
+    win.close()
+
+
+def test_el_analisis_acumula_retraso_descartes_y_traducciones(app, settings):
+    from interpreter.pipeline import UtteranceMetrics
+
+    win = MainWindow(_builder, settings=settings, load_on_start=False)
+    a = win._analysis
+    for seg in (1.0, 1.4, 2.0, 3.0):
+        win._on_metrics(UtteranceMetrics(stt=0.5, mt=0.3, first_audio_from_speech_end=seg))
+    win._on_dropped("eco", 1.0)
+    win._on_dropped("eco", 1.0)
+    win._on_dropped("idioma_distinto", 1.0)
+    win._on_translation_text("Hello")
+    st = a.stats()
+    assert (
+        st["n"] == 4
+        and st["min"] == 1.0
+        and st["max"] == 3.0
+        and 1.6 < st["mediana"] < 1.8
+        and st["p90"] > 2.0
+    )
+    assert a.drops["eco"] == 2 and a.translated == 1
+    assert "eco 2" in a.lbl_counts.text() and "Traducidas: 1" in a.lbl_counts.text()
+    assert win.lbl_delay.text() == "3.0 s"
+    win.close()
+
+
+def test_el_analisis_solo_actualiza_recursos_con_la_pagina_visible(app, settings):
+    win = MainWindow(_builder, settings=settings, load_on_start=False)
+    win.show()
+    win.show_page("idiomas")
+    app.processEvents()
+    assert not win._analysis._timer.isActive()  # oculta: no gasta CPU
+    win.show_page("analisis")
+    app.processEvents()
+    assert win._analysis._timer.isActive() and "CPU" in win._analysis.lbl_res.text()
+    win.show_page("audio")
+    app.processEvents()
+    assert not win._analysis._timer.isActive()
     win.close()
 
 
@@ -758,6 +836,7 @@ def test_la_voz_generica_ofrece_hombre_y_mujer_del_idioma_de_salida(app, setting
 def test_el_selector_de_voz_solo_se_ve_con_la_voz_generica(app, settings):
     win = _ventana_con_voces(settings, clone_is_available=True, license_prompt=lambda *a: True)
     win.show()
+    win.show_page("motor")  # el selector vive en «Voces y motor»
     win.cmb_profile.setCurrentIndex(win.cmb_profile.findData("fast"))
     win._sync_profile_widgets()
     assert win.cmb_voice.isVisible()

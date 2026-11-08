@@ -249,7 +249,7 @@ def _ventana(settings):
 
 def test_la_ventana_clasica_sigue_siendo_la_predeterminada(app, settings):
     win = _ventana(settings)
-    assert win._orb is None and win.btn_orb.text() == "Modo orbe"
+    assert win._orb is None and win.btn_orb.text() == "Ir al orbe"
     assert settings.value("ui_mode", "classic", type=str) == "classic"
     win.close()
 

@@ -11,7 +11,7 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.7.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+- **Versiones al cierre:** app **0.8.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
   en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
@@ -327,3 +327,17 @@ de aceptación, archivos a tocar y riesgos. Decisiones abiertas con la persona e
 - `sound.py`: acorde ascendente sintetizado (WAV en memoria, ≈ −12 dBFS) por `winsound` en la salida predeterminada; suena **una vez** al
   pasar LOADING→READY (no al detener); casilla «Sonido al terminar de cargar» (`sound_on_ready`).
 - Retraso: «Retraso 1,2 s · mediana 1,3 s» abajo del orbe (azul ≤1,5 s, ámbar ≤2,5 s, rojo). No verificado en pantalla real ni el sonido por los auriculares de la persona.
+
+## 22. Spec C implementada (0.8.0) — Ajustes pequeño, menú lateral, Ford Blue claro
+
+- La ventana (700×500) tiene **menú lateral azul `#0000FF`** con tarjetas blancas (Idiomas · Audio · Voces y motor · Análisis; Ctrl+1…4), barra
+  superior azul con el estado y un pie con «Iniciar», «Apagar micrófono» e «Ir al orbe». Cada página tiene su propio desplazamiento. Se
+  recuerda la última página (`settings_page`). `ui/theme.py` ahora es el tema **claro Ford Blue** de Visión (tokens en la spec C).
+- **Idiomas:** botón ⇄ invierte la dirección (si la voz no habla el nuevo destino, avisa y no cambia). **Audio:** micrófono, interruptor único,
+  volumen, «Reconectar», vigilante, salida, anti-eco, bucle. **Voces y motor:** perfil, voz hombre/mujer, grabar voz, reconocimiento,
+  aceleración, **pausa para cerrar frase**, glosario y sonido de «listo».
+- **Análisis** (`ui/analysis.py`): retraso (último, mediana, p90, mín, máx de las últimas 50 frases), barras de las últimas 12 (azul / ámbar /
+  rojo), traducidas y descartadas por motivo, CPU y memoria del proceso (`psutil`, solo con la página visible), estado del navegador,
+  intervenciones del vigilante y la transcripción con Copiar / Guardar / Limpiar.
+- **Pendiente / no hecho:** la variante «oscura» opcional de Ford Blue; el panel de ajustes anclado al orbe (§17); sustituir «Historial» del orbe
+  (la persona debe elegir; recomendado «Idiomas ⇄»). No verificado en la pantalla real de la persona (solo imágenes de prueba).

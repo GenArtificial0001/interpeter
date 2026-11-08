@@ -17,6 +17,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -26,11 +27,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSlider,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -56,6 +57,7 @@ from ..pipeline import UtteranceMetrics
 from ..stages.backends import app_home
 from ..voices import SapiVoice, installed_sapi_voices, voices_for
 from . import theme
+from .analysis import AnalysisPage
 from .glossary_dialog import GlossaryDialog
 from .hud import NATIVE, Mood, OrbWindow
 from .voice_dialog import VoiceSampleDialog
@@ -73,6 +75,7 @@ STATE_TEXT = {
 BROWSER_OUTPUT = "browser"  # dato del elemento especial de la lista de salidas
 BROWSER_LABEL = "Micrófono virtual del navegador (Teams web)"
 
+PAGES = [("idiomas", "Idiomas"), ("audio", "Audio"), ("motor", "Voces y motor"), ("analisis", "Análisis")]
 MUTE_OFF_TEXT = "Apagar micrófono"
 MUTE_ON_TEXT = "🔇 APAGADO · encender"
 
@@ -290,33 +293,78 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         root = QWidget()
         root.setObjectName("root")
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidget(root)
-        self.setCentralWidget(scroll)
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(24, 20, 24, 20)
-        outer.setSpacing(14)
+        self.setCentralWidget(root)
+        shell = QHBoxLayout(root)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
 
-        head = QHBoxLayout()
-        title = QLabel("Interpreter")
-        title.setObjectName("title")
-        sub = QLabel("Intérprete de voz local")
-        sub.setObjectName("muted")
-        left = QVBoxLayout()
-        left.setSpacing(0)
-        left.addWidget(title)
-        left.addWidget(sub)
-        head.addLayout(left)
-        head.addStretch()
+        # Menú lateral en azul Ford (como Visión): cada categoría es una tarjeta blanca.
+        side = QFrame()
+        side.setObjectName("sidebar")
+        side.setFixedWidth(158)
+        side_lay = QVBoxLayout(side)
+        side_lay.setContentsMargins(10, 14, 10, 10)
+        side_lay.setSpacing(6)
+        brand = QLabel("Interpreter")
+        brand.setObjectName("brand")
+        brand_sub = QLabel("Ajustes")
+        brand_sub.setObjectName("brandSub")
+        side_lay.addWidget(brand)
+        side_lay.addWidget(brand_sub)
+        side_lay.addSpacing(10)
+        self._stack = QStackedWidget()
+        self._nav: dict[str, QPushButton] = {}
+        self._page_index: dict[str, int] = {}
+        nav_group = QButtonGroup(self)
+        nav_group.setExclusive(True)
+        pages: dict[str, QVBoxLayout] = {}
+        for n, (key, label) in enumerate(PAGES):
+            btn = QPushButton(label)
+            btn.setObjectName("nav")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setShortcut(f"Ctrl+{n + 1}")
+            btn.clicked.connect(lambda _=False, k=key: self.show_page(k))
+            nav_group.addButton(btn)
+            side_lay.addWidget(btn)
+            self._nav[key] = btn
+            page = QWidget()
+            lay = QVBoxLayout(page)
+            lay.setContentsMargins(16, 12, 16, 12)
+            lay.setSpacing(10)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setWidget(page)
+            self._stack.addWidget(scroll)
+            pages[key] = lay
+            self._page_index[key] = n
+        side_lay.addStretch(1)
+        version = QLabel(f"v{__version__}")
+        version.setObjectName("brandSub")
+        side_lay.addWidget(version)
+        shell.addWidget(side)
+
+        right = QWidget()
+        outer = QVBoxLayout(right)  # barra superior · avisos · páginas · pie
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        shell.addWidget(right, 1)
+        topbar = QFrame()
+        topbar.setObjectName("topbar")
+        top = QHBoxLayout(topbar)
+        top.setContentsMargins(16, 8, 12, 8)
+        self.lbl_page = QLabel("")
+        self.lbl_page.setObjectName("pageTitle")
         self.state_pill = QLabel()
-        self.state_pill.setMinimumWidth(150)
-        self.state_pill.setMaximumWidth(360)
+        self.state_pill.setMinimumWidth(130)
+        self.state_pill.setMaximumWidth(320)
         self.state_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        head.addWidget(self.state_pill)
-        outer.addLayout(head)
+        top.addWidget(self.lbl_page)
+        top.addStretch(1)
+        top.addWidget(self.state_pill)
+        outer.addWidget(topbar)
 
         # Idiomas
         lang_card, lang_lay = _card()
@@ -328,9 +376,11 @@ class MainWindow(QMainWindow):
             self.cmb_source.addItem(name, code)
             self.cmb_target.addItem(name, code)
         self.cmb_target.setCurrentIndex(self.cmb_target.findData("en"))
-        arrow = QLabel("→")
-        arrow.setObjectName("muted")
-        arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        arrow = QPushButton("⇄")
+        arrow.setObjectName("swap")
+        arrow.setToolTip("Invertir los idiomas")
+        arrow.clicked.connect(self._swap_languages)
+        self.btn_swap = arrow
         for label, combo in (("Yo hablo", self.cmb_source), ("Ellos escuchan", self.cmb_target)):
             col = QVBoxLayout()
             lab = QLabel(label)
@@ -341,7 +391,7 @@ class MainWindow(QMainWindow):
             if combo is self.cmb_source:
                 row.addWidget(arrow)
         lang_lay.addLayout(row)
-        outer.addWidget(lang_card)
+        pages["idiomas"].addWidget(lang_card)
         self.cmb_target.currentIndexChanged.connect(self._on_target_changed)
         self.cmb_source.currentIndexChanged.connect(self._check_devices)  # borra avisos viejos de idiomas
         self.cmb_source.currentIndexChanged.connect(lambda *_: self._sync_orb())
@@ -393,7 +443,6 @@ class MainWindow(QMainWindow):
             "Avisa con un sonido corto cuando los modelos terminaron de cargar y ya puedes interpretar."
         )
         self.chk_sound.toggled.connect(lambda on: self._settings.setValue("sound_on_ready", on))
-        audio_lay.addWidget(self.chk_sound)
         self._ready_chime = sound.make_ready_chime()
         self.chk_keep_mic = QCheckBox("Mantener el micrófono activo mientras interpreto")
         self.chk_keep_mic.setChecked(bool(self._settings.value("keep_mic_alive", True, type=bool)))
@@ -421,7 +470,6 @@ class MainWindow(QMainWindow):
         audio_lay.addWidget(self.level_bar)
 
         tools = QHBoxLayout()
-        tools.addWidget(self._muted_label("Pausa para cerrar frase"))
         self.cmb_pause = QComboBox()
         for label, ms in PAUSES:
             self.cmb_pause.addItem(label, ms)
@@ -430,7 +478,6 @@ class MainWindow(QMainWindow):
             "Rápida responde antes pero corta las frases en trozos más cortos; lenta traduce frases más "
             "completas pero tarda más."
         )
-        tools.addWidget(self.cmb_pause)
         self.chk_echo = QCheckBox("Anti-eco")
         self.chk_echo.setChecked(True)
         self.chk_echo.setToolTip(
@@ -453,7 +500,7 @@ class MainWindow(QMainWindow):
         self.lbl_loop.setWordWrap(True)
         self.lbl_loop.hide()
         audio_lay.addWidget(self.lbl_loop)
-        outer.addWidget(audio_card)
+        pages["audio"].addWidget(audio_card)
 
         self.mute_banner = QLabel("🔇  MICRÓFONO SILENCIADO — lo que digas NO se traduce. Pulsa «reanudar».")
         self.mute_banner.setStyleSheet(
@@ -473,7 +520,7 @@ class MainWindow(QMainWindow):
         self.btn_mute.setCheckable(True)
         self.btn_mute.setToolTip("Mientras esté activo, lo que digas NO se traduce ni se envía a la llamada.")
         self.btn_mute.toggled.connect(self._on_mute_toggled)
-        self.btn_orb = QPushButton("Modo orbe")
+        self.btn_orb = QPushButton("Ir al orbe")
         self.btn_orb.setToolTip(
             "Interfaz alternativa: una ventana transparente con un orbe (clic derecho para volver)."
         )
@@ -481,34 +528,22 @@ class MainWindow(QMainWindow):
         ctrl.addWidget(self.btn_toggle, 1)
         ctrl.addWidget(self.btn_mute)
         ctrl.addWidget(self.btn_orb)
-        outer.addLayout(ctrl)
+        outer.addWidget(self._stack, 1)
+        footer = QFrame()
+        footer.setObjectName("footer")
+        foot_lay = QHBoxLayout(footer)
+        foot_lay.setContentsMargins(16, 8, 16, 8)
+        foot_lay.addLayout(ctrl)
+        outer.addWidget(footer)
 
-        # Latencia
-        lat_card, lat_lay = _card()
-        lat_lay.addWidget(_section("Retraso desde que terminas de hablar"))
-        lrow = QHBoxLayout()
-        self.lbl_delay = QLabel("—")
-        self.lbl_delay.setObjectName("metric")
-        self.lbl_detail = QLabel("Sin datos todavía")
-        self.lbl_detail.setObjectName("muted")
-        lrow.addWidget(self.lbl_delay)
-        lrow.addSpacing(12)
-        lrow.addWidget(self.lbl_detail, 1)
-        lat_lay.addLayout(lrow)
-        outer.addWidget(lat_card)
-
-        # Transcripción
-        log_card, log_lay = _card()
-        log_lay.addWidget(_section("Transcripción"))
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setMaximumBlockCount(300)
-        self.log.setMinimumHeight(140)
-        log_lay.addWidget(self.log, 1)
-        outer.addWidget(log_card, 1)
+        # Análisis: retraso, descartes, recursos y transcripción
+        self._analysis = AnalysisPage()
+        self.lbl_delay = self._analysis.lbl_delay
+        self.lbl_detail = self._analysis.lbl_detail
+        self.log = self._analysis.log
+        pages["analisis"].addWidget(self._analysis, 1)
 
         # Avanzado
-        adv = QHBoxLayout()
         self.cmb_profile = QComboBox()
         for code, name in PROFILES.items():
             self.cmb_profile.addItem(name, code)
@@ -535,16 +570,7 @@ class MainWindow(QMainWindow):
         self.cmb_voice.setToolTip("Voz de hombre o de mujer para el perfil «Rápido (voz genérica)».")
         self.cmb_voice.setMinimumWidth(190)
         self.cmb_voice.activated.connect(self._on_voice_changed)
-        adv.addWidget(self._muted_label("Perfil de voz"))
-        adv.addWidget(self.cmb_profile)
-        adv.addWidget(self.lbl_voice)
-        adv.addWidget(self.cmb_voice)
-        adv.addWidget(self.btn_rec)
-        adv.addWidget(self.btn_ref)
-        adv.addWidget(self.lbl_ref, 1)
-        outer.addLayout(adv)
 
-        rec = QHBoxLayout()
         self.cmb_stt = QComboBox()
         for label, model in STT_MODELS:
             self.cmb_stt.addItem(label, model)
@@ -554,27 +580,82 @@ class MainWindow(QMainWindow):
         self.cmb_accel.setToolTip(
             "Con OpenVINO, el reconocimiento usa la GPU de Intel (más rápido). Si falla, cae a la CPU."
         )
-        rec.addWidget(self._muted_label("Reconocimiento"))
-        rec.addWidget(self.cmb_stt, 1)
-        rec.addWidget(self._muted_label("Aceleración"))
-        rec.addWidget(self.cmb_accel, 1)
         self.btn_glossary = QPushButton("Glosario…")
         self.btn_glossary.setToolTip(
             "Palabras en inglés, siglas y nombres (SharePoint, Ford, SAP…) que no hay que traducir."
         )
         self.btn_glossary.clicked.connect(self._edit_glossary)
-        rec.addWidget(self.btn_glossary)
-        outer.addLayout(rec)
+        voz_card, voz = _card()
+        voz.addWidget(_section("Voz"))
+        g = QGridLayout()
+        g.setHorizontalSpacing(10)
+        g.setVerticalSpacing(8)
+        g.addWidget(self._muted_label("Perfil de voz"), 0, 0)
+        g.addWidget(self.cmb_profile, 0, 1, 1, 3)
+        g.addWidget(self.lbl_voice, 1, 0)
+        g.addWidget(self.cmb_voice, 1, 1, 1, 3)
+        g.addWidget(self.btn_rec, 2, 1)
+        g.addWidget(self.btn_ref, 2, 2)
+        g.addWidget(self.lbl_ref, 2, 3)
+        g.setColumnStretch(3, 1)
+        voz.addLayout(g)
+        pages["motor"].addWidget(voz_card)
+        motor_card, mot = _card()
+        mot.addWidget(_section("Reconocimiento y velocidad"))
+        g2 = QGridLayout()
+        g2.setHorizontalSpacing(10)
+        g2.setVerticalSpacing(8)
+        g2.addWidget(self._muted_label("Reconocimiento"), 0, 0)
+        g2.addWidget(self.cmb_stt, 0, 1)
+        g2.addWidget(self._muted_label("Aceleración"), 1, 0)
+        g2.addWidget(self.cmb_accel, 1, 1)
+        g2.addWidget(self._muted_label("Pausa para cerrar frase"), 2, 0)
+        g2.addWidget(self.cmb_pause, 2, 1)
+        g2.setColumnStretch(1, 1)
+        mot.addLayout(g2)
+        fila = QHBoxLayout()
+        fila.addWidget(self.btn_glossary)
+        fila.addStretch(1)
+        mot.addLayout(fila)
+        mot.addWidget(self.chk_sound)
+        pages["motor"].addWidget(motor_card)
+        for key, lay in pages.items():
+            if key != "analisis":
+                lay.addStretch(1)
         self.cmb_stt.currentIndexChanged.connect(self._on_profile_changed)
         self.cmb_accel.currentIndexChanged.connect(self._on_profile_changed)
         self.cmb_profile.currentIndexChanged.connect(self._on_profile_changed)
         self._sync_profile_widgets()
+        self.show_page(str(self._settings.value("settings_page", "idiomas", type=str)))
 
     def _fit_initial_size(self) -> None:
-        """Abre con todo el contenido visible si la pantalla lo permite; si no, con scroll."""
-        content = self.centralWidget().widget().sizeHint().height() + 8  # type: ignore[attr-defined]
-        screen = self.screen().availableGeometry().height() if self.screen() else 900
-        self.resize(780, max(480, min(content, screen - 80)))
+        """Ventana pequeña (los ajustes no son la pantalla principal: esa es el orbe)."""
+        self.resize(700, 500)
+
+    def show_page(self, key: str) -> None:
+        """Muestra la categoría ``key`` del menú lateral y recuerda cuál fue."""
+        if key not in self._page_index:
+            key = PAGES[0][0]
+        self._stack.setCurrentIndex(self._page_index[key])
+        self._nav[key].setChecked(True)
+        self.lbl_page.setText(dict(PAGES)[key])
+        self._settings.setValue("settings_page", key)
+
+    def _swap_languages(self) -> None:
+        """⇄: intercambia «Yo hablo» y «Ellos escuchan» (si la voz no habla el nuevo destino, avisa)."""
+        src, dst = self.cmb_source.currentData(), self.cmb_target.currentData()
+        problem = voice_problem(self.cmb_profile.currentData(), src)
+        if problem:
+            self._show_warning(problem)
+            return
+        for combo in (self.cmb_source, self.cmb_target):
+            combo.blockSignals(True)
+        self.cmb_source.setCurrentIndex(self.cmb_source.findData(dst))
+        self.cmb_target.setCurrentIndex(self.cmb_target.findData(src))
+        for combo in (self.cmb_source, self.cmb_target):
+            combo.blockSignals(False)
+        self._on_target_changed()
+        self._sync_orb()
 
     @staticmethod
     def _muted_label(text: str) -> QLabel:
@@ -745,6 +826,7 @@ class MainWindow(QMainWindow):
             if "No hay ningún navegador" in self.lbl_loop.text():
                 self._set_loop_text("")
         self.lbl_browser.setText(text)
+        self._analysis.set_connection("Navegador: " + text.lstrip("✓ "))
         self.lbl_browser.setStyleSheet(f"color:{theme.ACCENT};" if n else f"color:{theme.WARN};")
         self.lbl_browser.show()
 
@@ -945,6 +1027,7 @@ class MainWindow(QMainWindow):
             try:
                 self._sys_mic = self._mic_control.set_mute(self._sys_mic.id, False)
                 self.mic_events += 1
+                self._analysis.mic_events = self.mic_events
                 self._log_mic("vigilante")
                 self._notice("El micrófono se había silenciado solo; lo reactivé")
                 self._last_signal = self._clock()
@@ -959,6 +1042,7 @@ class MainWindow(QMainWindow):
                 self._last_signal = now
                 self._silence_warned = False
                 self.mic_events += 1
+                self._analysis.mic_events = self.mic_events
                 self._log_mic("vigilante: sin audio")
                 if self.engine.restart_capture():
                     self._notice("No llegaba audio; reinicié el micrófono")
@@ -1184,6 +1268,7 @@ class MainWindow(QMainWindow):
             self._log("🔇", "Micrófono silenciado: lo que digas no se traducirá hasta que pulses «reanudar».")
 
     def _on_dropped(self, reason: str, seconds: float) -> None:
+        self._analysis.count_drop(reason)
         textos = {
             "silenciado": (
                 "🔇",
@@ -1262,6 +1347,7 @@ class MainWindow(QMainWindow):
 
     def _on_translation_text(self, text: str) -> None:
         self._log("→", text)
+        self._analysis.count_translated()
         if self._orb is not None:
             self._orb.set_caption(f"{self._last_original}  →  {text}" if self._last_original else text)
             self._orb.speak(len(text) * 0.065)  # estimado: la voz tarda ~65 ms por carácter
@@ -1366,6 +1452,7 @@ class MainWindow(QMainWindow):
         if m.first_audio_from_speech_end is None:
             return
         self._lat.append(m.first_audio_from_speech_end)
+        self._analysis.add_latency(m.first_audio_from_speech_end, m.stt, m.mt)
         if self._orb is not None:
             self._orb.set_latency(m.first_audio_from_speech_end, statistics.median(self._lat))
         self.lbl_delay.setText(f"{m.first_audio_from_speech_end:.1f} s")
