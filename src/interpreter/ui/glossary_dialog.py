@@ -30,16 +30,15 @@ COLUMNS = [
     "Inglés",
     "Portugués",
     "Francés",
-    "Alemán",
 ]
-TARGETS = {3: "en", 4: "pt", 5: "fr", 6: "de"}
+TARGETS = {3: "en", 4: "pt", 5: "fr"}
 HELP = (
     "Cada fila es un término que NO debe traducirse ni deformarse (SharePoint, Ford, SAP…).\n"
     "• Variantes: cómo lo escribe a veces el reconocimiento («sherpoin, share point»), separadas por comas. "
     "Para una sigla, cómo suena en español («ese a pe»). Mira el registro si dudas.\n"
     "• Pronunciación: cómo debe decirlo la voz sintética («S A P» para deletrear). Vacío = tal cual.\n"
-    "• Inglés / Portugués / Francés / Alemán: si quieres una traducción fija (p. ej. «patio de "
-    "contenedores» → «container yard»). Vacío = se deja el término igual."
+    "• Inglés / Portugués / Francés: si quieres una traducción fija (p. ej. «patio de contenedores» → "
+    "«container yard»). Vacío = se deja el término igual."
 )
 
 
@@ -67,7 +66,7 @@ class GlossaryDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
-        for col, width in enumerate((140, 220, 100, 110, 110, 110, 110)):
+        for col, width in enumerate((140, 230, 110, 120, 120, 120)):
             self.table.setColumnWidth(col, width)
         lay.addWidget(self.table, 1)
 

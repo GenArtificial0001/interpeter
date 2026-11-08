@@ -96,22 +96,6 @@ voz en ese idioma, y la casilla **Anti-eco** ignora lo que el micrófono capta m
 traducción. Con micrófono y altavoces del mismo equipo (o el mismo auricular Bluetooth) conviene separar
 los dispositivos.
 
-## Idiomas
-
-| Idioma | Escribir la traducción | Voz genérica | Clonado rápido (YourTTS) | Clonado lento (XTTSv2) |
-|---|---|---|---|---|
-| Inglés, francés, portugués | ✓ | ✓ | ✓ | ✓ |
-| Español | ✓ | ✓ | no | ✓ |
-| Alemán | ✓ | ✓ | no | ✓ |
-| Chino (mandarín) | ✓ | **no hay voz** (MMS no lo tiene) | no | solo con el paquete `pypinyin` |
-| Japonés | ✓ | **no hay voz** (MMS no lo tiene) | no | solo con el paquete `cutlet` |
-
-El reconocimiento (Whisper) y la traducción (NLLB) cubren todos. Lo que limita es la **voz**: la ventana avisa si
-el perfil elegido no habla el idioma de salida y sugiere uno que sí. La primera vez que eliges un idioma nuevo se
-descarga su voz (unos 140 MB, hace falta la VPN); después funciona sin red. Chino y japonés necesitan que TI agregue
-`pypinyin` y `cutlet` (y sus dependencias) al repositorio interno de pip; hasta entonces solo se puede leer la
-traducción. Las cifras se leen en voz alta en cada idioma.
-
 ## Palabras en inglés, siglas y nombres: el glosario
 
 Un reconocedor en español «oye» mal las palabras en inglés («Sherpoin», «fort») y un traductor puede

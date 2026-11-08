@@ -26,49 +26,7 @@ from .vad import AdaptiveEnergyVAD, EnergyVAD, Segmenter, VadConfig
 
 log = logging.getLogger(__name__)
 
-LANGUAGES = {
-    "es": "Español",
-    "en": "Inglés",
-    "pt": "Portugués",
-    "fr": "Francés",
-    "de": "Alemán",
-    "zh": "Chino (mandarín)",
-    "ja": "Japonés",
-}
-
-# Idiomas que puede HABLAR cada perfil de voz. La traducción escrita (NLLB) y el reconocimiento (Whisper) sí
-# cubren todos los de LANGUAGES; la voz es lo que limita.
-VOICE_LANGS = {
-    "fast": frozenset({"es", "en", "pt", "fr", "de"}),  # MMS-TTS (un modelo por idioma)
-    "clone_fast": frozenset({"en", "fr", "pt"}),  # YourTTS
-    "clone": frozenset({"es", "en", "pt", "fr", "de", "zh", "ja"}),  # XTTSv2
-}
-# Paquetes que XTTSv2 necesita para leer chino y japonés (el índice de Ford no los tiene todavía).
-XTTS_EXTRA_PACKAGES = {"zh": "pypinyin", "ja": "cutlet"}
-PROFILE_NAMES = {
-    "fast": "Rápido (voz genérica)",
-    "clone_fast": "Clonado rápido (YourTTS)",
-    "clone": "Clonado alta calidad (XTTSv2)",
-}
-
-
-def voice_problem(profile: str, target: str) -> str | None:
-    """Motivo por el que ``profile`` no puede hablar ``target`` (``None`` si puede), en lenguaje llano."""
-    import importlib.util
-
-    name = LANGUAGES.get(target, target)
-    if target not in VOICE_LANGS.get(profile, frozenset()):
-        capable = [PROFILE_NAMES[p] for p, langs in VOICE_LANGS.items() if target in langs]
-        if not capable:
-            return f"Todavía no hay voz en {name}."
-        return f"El perfil «{PROFILE_NAMES.get(profile, profile)}» no habla {name}: usa «{capable[0]}»."
-    package = XTTS_EXTRA_PACKAGES.get(target) if profile == "clone" else None
-    if package and importlib.util.find_spec(package) is None:
-        return (
-            f"Hablar {name} con XTTSv2 necesita el paquete «{package}», que falta en este equipo "
-            "(pídele a TI que lo agregue al repositorio interno de pip)."
-        )
-    return None
+LANGUAGES = {"es": "Español", "en": "Inglés", "pt": "Portugués", "fr": "Francés"}
 
 
 class EngineState(enum.Enum):
@@ -272,11 +230,7 @@ class Engine:
             cfg = self.config
             if cfg.source == cfg.target:
                 raise EngineError("El idioma de entrada y el de salida no pueden ser el mismo.")
-            problem = voice_problem(cfg.tts_profile, cfg.target)
-            if problem:
-                raise EngineError(problem)
             stt, mt, tts = self._backends
-            self._prefetch_voice(cfg.target)
             if hasattr(stt, "glossary"):
                 stt.glossary = self.glossary  # sesgo del reconocimiento y corrección de términos
             self._pipeline = Pipeline(
@@ -363,28 +317,9 @@ class Engine:
     # -- controles en caliente ---------------------------------------------------------------------
 
     def set_target_language(self, language: str) -> None:
-        problem = voice_problem(self.config.tts_profile, language)
-        if problem:
-            raise EngineError(problem)
         self.config.target = language
-        self._prefetch_voice(language)
         if self._pipeline is not None:
             self._pipeline.set_target_language(language)
-
-    def _prefetch_voice(self, language: str) -> None:
-        """Si la voz de ``language`` no está cargada (o descargada), la prepara en segundo plano."""
-        prepare = getattr(self._backends[2], "prepare", None) if self._backends else None
-        if prepare is None:
-            return
-
-        def work() -> None:
-            try:
-                prepare(language)
-            except Exception as exc:  # noqa: BLE001 - se informa al usuario; no debe tumbar nada
-                log.warning("No se pudo preparar la voz de %s", language, exc_info=exc)
-                self.events.on_error(str(exc))
-
-        threading.Thread(target=work, name="voz-previa", daemon=True).start()
 
     def set_muted(self, muted: bool) -> None:
         self.muted = muted

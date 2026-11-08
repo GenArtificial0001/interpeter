@@ -74,25 +74,3 @@ def test_la_voz_recibe_las_cifras_ya_escritas():
     tl = Translation("The numbers are 1, 2, 3.", "es", "en")
     list(TTSStage(tts).process(tl))
     assert "1" not in tts.spoken[0] and "one" in tts.spoken[0]
-
-
-@n2w
-@pytest.mark.parametrize(
-    "texto,lang,esperado",
-    [
-        (
-            "Die Zahlen sind 1, 2 und 3, 50% um 10:30",
-            "de",
-            "Die Zahlen sind eins, zwei und drei, fünfzig Prozent um zehn Uhr dreißig",
-        ),
-        (
-            "1.234 Einheiten und 3,5",
-            "de",
-            "eintausendzweihundertvierunddreißig Einheiten und drei Komma fünf",
-        ),
-        ("现在是 3 点", "zh", "现在是 三 点"),
-        ("1、2", "ja", "一、二"),
-    ],
-)
-def test_aleman_chino_y_japones(texto, lang, esperado):
-    assert spell_numbers(texto, lang) == esperado
