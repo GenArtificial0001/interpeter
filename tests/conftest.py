@@ -17,6 +17,10 @@ class FakeMicBackend:
         self.writes: list[tuple] = []
         self.ignore_writes = False  # simula un driver que no aplica el cambio
 
+    def external_mute(self, muted: bool = True) -> None:
+        """Simula que OTRO (Windows, el auricular) cambia el silencio sin que lo pida la persona."""
+        self.muted = muted
+
     def list_microphones(self) -> list[sysmic.Microphone]:
         if not self.controllable:
             return [sysmic.Microphone(self.mic_id, self.name, True, None, None)]

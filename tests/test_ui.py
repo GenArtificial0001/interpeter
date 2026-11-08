@@ -281,11 +281,11 @@ def test_silenciar_cambia_el_texto_la_pastilla_y_avisa(app, settings):
     win.btn_toggle.click()
     assert "Interpretando" in win.state_pill.text()
     win.btn_mute.click()
-    assert win.engine.muted and "SILENCIADO" in win.btn_mute.text()
+    assert win.engine.muted and "APAGADO" in win.btn_mute.text()
     assert "Silenciado" in win.state_pill.text()
     assert "silenciado" in win.log.toPlainText().lower()
     win.btn_mute.click()
-    assert not win.engine.muted and win.btn_mute.text() == "Silenciar"
+    assert not win.engine.muted and win.btn_mute.text() == "Apagar micrófono"
     assert "Interpretando" in win.state_pill.text()
     win.btn_toggle.click()
     win.close()

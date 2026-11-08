@@ -559,3 +559,144 @@ def test_el_orbe_cabe_dentro_del_anillo_grande(app):
                 d / u,
             )  # iconos y letras dentro del círculo (el anillo grande mide 0,52)
     assert w.width() == 480  # tamaño inicial más pequeño
+
+
+# -- spec A: micrófono unificado, «encender» forzado y vigilante ---------------------------------------------
+
+
+class _CapSpy(_Cap):
+    abiertas = 0
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        type(self).abiertas += 1
+
+
+def _ventana_en_marcha(settings):
+    """Ventana con el motor en marcha (captura falsa que cuenta cuántas veces se abre)."""
+    _CapSpy.abiertas = 0
+    t = [1000.0]
+
+    def build(config, events):
+        return Engine(config, events, lambda c: (FakeSTT(), FakeMT(), FakeTTS(chunks=1)), _CapSpy, _Ply)
+
+    win = MainWindow(build, settings=settings, load_on_start=False, voice_lister=lambda: [])
+    win._clock = lambda: t[0]
+    win.engine.load()
+    win._toggle()  # inicia (RUNNING)
+    return win, t
+
+
+def test_apagar_y_encender_son_el_mismo_interruptor_en_los_tres_lugares(app, settings, mic_falso):
+    win = _ventana(settings)
+    win.open_orb()
+    win._orb.mic_requested.emit()  # clic en «Micrófono» del orbe
+    assert win.engine.muted and mic_falso.muted and not win.chk_mic_on.isChecked()
+    assert win.btn_mute.isChecked() and "APAGADO" in win.btn_mute.text()
+    win.chk_mic_on.setChecked(True)  # la casilla lo vuelve a encender
+    assert not win.engine.muted and not mic_falso.muted and not win.btn_mute.isChecked()
+    win.btn_mute.setChecked(True)  # y el botón de la ventana
+    assert mic_falso.muted and not win.chk_mic_on.isChecked()
+    win.close()
+
+
+def test_encender_fuerza_el_ciclo_aunque_windows_diga_que_ya_estaba_activo(app, settings, mic_falso):
+    win = _ventana(settings)
+    mic_falso.writes.clear()
+    win.btn_mute.setChecked(True)
+    win.btn_mute.setChecked(False)
+    assert mic_falso.writes.count(("mute", True)) == 2 and mic_falso.writes[-1] == ("mute", False)
+    mic_falso.writes.clear()
+    win.reconnect_mic()  # «Reconectar» también cicla aunque ya estuviera activo
+    assert mic_falso.writes == [("mute", True), ("mute", False)]
+    win.close()
+
+
+def test_apagar_no_toca_el_volumen_y_encender_devuelve_el_mismo(app, settings, mic_falso):
+    win = _ventana(settings)
+    win.btn_mute.setChecked(True)
+    win.btn_mute.setChecked(False)
+    assert mic_falso.volume == 80
+    win.close()
+
+
+def test_encender_mientras_se_interpreta_reinicia_la_captura(app, settings, mic_falso):
+    win, _ = _ventana_en_marcha(settings)
+    assert _CapSpy.abiertas == 1
+    win.btn_mute.setChecked(True)
+    assert _CapSpy.abiertas == 1  # apagar no reabre nada
+    win.btn_mute.setChecked(False)
+    assert _CapSpy.abiertas == 2  # encender reabre la captura (sin recargar modelos)
+    win.engine.stop()
+    win.close()
+
+
+def test_el_vigilante_reactiva_un_microfono_silenciado_por_otro(app, settings, mic_falso):
+    win, _ = _ventana_en_marcha(settings)
+    mic_falso.external_mute(True)  # el auricular o Windows lo silencian solos
+    win._mic_watch()
+    assert not mic_falso.muted and win.mic_events == 1
+    assert "se había silenciado solo" in win.log.toPlainText()
+    win.engine.stop()
+    win.close()
+
+
+def test_el_vigilante_no_hace_nada_si_la_persona_apago_el_microfono(app, settings, mic_falso):
+    win, _ = _ventana_en_marcha(settings)
+    win.btn_mute.setChecked(True)
+    mic_falso.writes.clear()
+    win._mic_watch()
+    assert mic_falso.muted and mic_falso.writes == [] and win.mic_events == 0
+    win.engine.stop()
+    win.close()
+
+
+def test_el_vigilante_se_puede_desactivar(app, settings, mic_falso):
+    win, _ = _ventana_en_marcha(settings)
+    win.chk_keep_mic.setChecked(False)
+    mic_falso.external_mute(True)
+    win._mic_watch()
+    assert mic_falso.muted and win.mic_events == 0
+    win.engine.stop()
+    win.close()
+
+
+def test_sin_audio_durante_6_s_reinicia_la_captura_con_tope_de_uno_cada_30_s(app, settings, mic_falso):
+    win, t = _ventana_en_marcha(settings)
+    t[0] += 5
+    win._mic_watch()
+    assert _CapSpy.abiertas == 1  # todavía no pasaron 6 s sin señal
+    t[0] += 2
+    win._mic_watch()
+    assert _CapSpy.abiertas == 2 and "reinicié el micrófono" in win.log.toPlainText()
+    t[0] += 10  # otra vez sin señal, pero dentro de los 30 s: no reinicia de nuevo, avisa
+    win._mic_watch()
+    assert _CapSpy.abiertas == 2 and "No llega audio" in win.log.toPlainText()
+    t[0] += 40
+    win._mic_watch()
+    assert _CapSpy.abiertas == 3  # pasado el enfriamiento, vuelve a intentarlo
+    win.engine.stop()
+    win.close()
+
+
+def test_si_llega_audio_el_vigilante_no_reinicia_nada(app, settings, mic_falso):
+    win, t = _ventana_en_marcha(settings)
+    for _ in range(10):
+        t[0] += 3
+        win._on_level(0.05)  # llega señal real
+        win._mic_watch()
+    assert _CapSpy.abiertas == 1 and win.mic_events == 0
+    win.engine.stop()
+    win.close()
+
+
+def test_los_cambios_del_microfono_quedan_en_el_registro(app, settings, mic_falso, caplog):
+    import logging
+
+    win = _ventana(settings)
+    with caplog.at_level(logging.INFO, logger="interpreter.ui.window"):
+        win.btn_mute.setChecked(True)
+    assert any(
+        "Micrófono: silenciado=True" in r.message and "origen=persona" in r.message for r in caplog.records
+    )
+    win.close()

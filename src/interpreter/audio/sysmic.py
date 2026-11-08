@@ -341,6 +341,28 @@ def set_mute(mic_id: str, muted: bool) -> Microphone:
     return after
 
 
+def force_cycle(mic_id: str) -> Microphone:
+    """«Encender de verdad»: silencia y reactiva el micrófono aunque Windows diga que ya estaba activo.
+
+    Es lo que la persona hacía a mano (desmarcar y marcar) cuando «se apagaba solo»: escribir el estado
+    otra vez reinicia el dispositivo de captura. No toca el volumen. Devuelve el estado releído (activo).
+    """
+    _find(mic_id)
+    try:
+        backend = _get_backend()
+        backend.set_mute(mic_id, True)
+        backend.set_mute(mic_id, False)
+    except Exception as exc:  # noqa: BLE001
+        raise _friendly(exc, "reactivar el micrófono") from exc
+    after = _find(mic_id)
+    if after.muted is not False:
+        raise MicControlError(
+            "Windows no aplicó el cambio en este micrófono. "
+            "Prueba desde el Panel de control > Sonido > Grabación."
+        )
+    return after
+
+
 def set_volume(mic_id: str, percent: int) -> Microphone:
     """Volumen de 0 a 100: de 1 a 100 fija el nivel y quita el silencio; 0 SILENCIA y deja el nivel."""
     level = max(0, min(100, int(percent)))

@@ -9,6 +9,7 @@ import math
 import os
 import statistics
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
@@ -72,8 +73,8 @@ STATE_TEXT = {
 BROWSER_OUTPUT = "browser"  # dato del elemento especial de la lista de salidas
 BROWSER_LABEL = "Micrófono virtual del navegador (Teams web)"
 
-MUTE_OFF_TEXT = "Silenciar"
-MUTE_ON_TEXT = "🔇 SILENCIADO · reanudar"
+MUTE_OFF_TEXT = "Apagar micrófono"
+MUTE_ON_TEXT = "🔇 APAGADO · encender"
 
 PROFILES = {
     "fast": "Rápido (voz genérica)",
@@ -201,6 +202,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._mic_control = mic_control  # lista, activa/silencia y sube/baja el micrófono de Windows
         self._sys_mic: sysmic.Microphone | None = None
+        self._clock = time.monotonic  # reloj del vigilante (las pruebas lo reemplazan)
+        self._syncing_mic = False  # evita bucles entre la casilla y el botón de apagar
+        self._last_signal = time.monotonic()  # última vez que llegó audio real del micrófono
+        self._last_restart = float("-inf")
+        self._silence_warned = False
+        self.mic_events = 0  # cuántas veces el vigilante tuvo que intervenir (para el análisis)
         self._orb: OrbWindow | None = None
         self._sapi_voices: list[SapiVoice] = []
         self._active_voice = "auto"
@@ -252,6 +259,8 @@ class MainWindow(QMainWindow):
             target=self._load_sapi_voices, args=(voice_lister,), name="voces-windows", daemon=True
         ).start()
 
+        self._mic_watch_timer = QTimer(self)
+        self._mic_watch_timer.timeout.connect(self._mic_watch)
         self._meter_timer = QTimer(self)
         self._meter_timer.timeout.connect(self._tick_meter)
         self._meter_timer.start(40)
@@ -349,9 +358,9 @@ class MainWindow(QMainWindow):
         self.mic_row = QWidget()
         mic_lay = QHBoxLayout(self.mic_row)
         mic_lay.setContentsMargins(0, 0, 0, 0)
-        self.chk_mic_on = QCheckBox("Micrófono de Windows activado")
+        self.chk_mic_on = QCheckBox("Micrófono activado")
         self.chk_mic_on.setToolTip(
-            "Activa o silencia este micrófono en Windows (igual que Panel de control > Sonido)."
+            "Enciende o apaga el micrófono (en Interpreter y en Windows, como Panel de control > Sonido)."
         )
         self.sld_mic = QSlider(Qt.Orientation.Horizontal)
         self.sld_mic.setRange(0, 100)
@@ -362,6 +371,10 @@ class MainWindow(QMainWindow):
         mic_lay.addWidget(self.chk_mic_on)
         mic_lay.addWidget(self.sld_mic, 1)
         mic_lay.addWidget(self.lbl_mic_vol)
+        self.btn_mic_reconnect = QPushButton("Reconectar")
+        self.btn_mic_reconnect.setToolTip("Reinicia el micrófono (Windows y captura) si dejó de escucharte.")
+        self.btn_mic_reconnect.clicked.connect(self.reconnect_mic)
+        mic_lay.addWidget(self.btn_mic_reconnect)
         self.mic_row.hide()  # solo se ve si Windows deja controlar este micrófono
         audio_lay.addWidget(self.mic_row)
         self._mic_timer = QTimer(self)  # el volumen se aplica 200 ms después de soltar/mover el control
@@ -369,6 +382,14 @@ class MainWindow(QMainWindow):
         self._mic_timer.timeout.connect(self._apply_mic_volume)
         self.chk_mic_on.toggled.connect(self._on_mic_toggled)
         self.sld_mic.valueChanged.connect(self._on_mic_slider)
+        self.chk_keep_mic = QCheckBox("Mantener el micrófono activo mientras interpreto")
+        self.chk_keep_mic.setChecked(bool(self._settings.value("keep_mic_alive", True, type=bool)))
+        self.chk_keep_mic.setToolTip(
+            "Si Windows o el auricular lo silencian solo, se reactiva en segundos; si deja de llegar audio, "
+            "se reinicia la captura."
+        )
+        self.chk_keep_mic.toggled.connect(lambda on: self._settings.setValue("keep_mic_alive", on))
+        audio_lay.addWidget(self.chk_keep_mic)
         self.lbl_browser = QLabel()
         self.lbl_browser.setWordWrap(True)
         self.lbl_browser.hide()
@@ -848,13 +869,89 @@ class MainWindow(QMainWindow):
             self._orb.sys_mic_muted = mic.muted if known and mic is not None else None
 
     def _on_mic_toggled(self, on: bool) -> None:
-        if self._sys_mic is None:
+        """La casilla y el botón «apagar micrófono» son el MISMO interruptor: la casilla mueve al botón."""
+        if self._syncing_mic:
             return
-        try:
-            self._sys_mic = self._mic_control.set_mute(self._sys_mic.id, not on)
-        except Exception as exc:  # noqa: BLE001
-            self._show_warning(str(exc))
+        self.btn_mute.setChecked(not on)
+
+    def _apply_sys_mic(self, enabled: bool, origin: str) -> None:
+        """Windows sigue a la persona: apagar lo silencia; encender FUERZA un ciclo y reabre la captura."""
+        if self._sys_mic is not None and self._sys_mic.muted is not None:
+            try:
+                if enabled:
+                    self._sys_mic = self._mic_control.force_cycle(self._sys_mic.id)
+                else:
+                    self._sys_mic = self._mic_control.set_mute(self._sys_mic.id, True)
+            except Exception as exc:  # noqa: BLE001 - la aplicación sigue igual aunque Windows no obedezca
+                self._show_warning(str(exc))
+        if enabled and self.engine.state is EngineState.RUNNING:
+            self.engine.restart_capture()
+            self._last_signal = self._clock()
+        self._log_mic(origin)
         self._refresh_mic()
+
+    def _log_mic(self, origin: str) -> None:
+        m = self._sys_mic
+        log.info(
+            "Micrófono: silenciado=%s volumen=%s dispositivo=%s origen=%s",
+            None if m is None else m.muted,
+            None if m is None else m.volume,
+            "-" if m is None else m.name,
+            origin,
+        )
+
+    def reconnect_mic(self) -> None:
+        """Acción manual «Reconectar micrófono»: ciclo de Windows y reinicio de la captura."""
+        self._syncing_mic = True
+        self.btn_mute.setChecked(False)
+        self._syncing_mic = False
+        self.engine.set_muted(False)
+        self._apply_sys_mic(True, "persona")
+        self._notice("Micrófono reconectado")
+
+    def _notice(self, text: str) -> None:
+        """Mensaje breve para la persona (en el orbe si está abierto; siempre en la transcripción)."""
+        self._log("🎙", text)
+        if self._orb is not None:
+            self._orb.set_caption(text)
+
+    # -- vigilante: mantiene el micrófono vivo mientras se interpreta (spec A) ---------------------------
+    SILENCE_S = 6.0  # sin nada de señal durante tanto tiempo = el flujo de audio se colgó
+    RESTART_COOLDOWN_S = 30.0
+
+    def _mic_watch(self) -> None:
+        """Cada 2 s al interpretar: reactiva el micrófono silenciado solo; sin audio, reinicia la captura."""
+        if (
+            self.engine.state is not EngineState.RUNNING
+            or self.engine.muted
+            or not self.chk_keep_mic.isChecked()
+        ):
+            return
+        self._refresh_mic()
+        if self._sys_mic is not None and self._sys_mic.muted:
+            try:
+                self._sys_mic = self._mic_control.set_mute(self._sys_mic.id, False)
+                self.mic_events += 1
+                self._log_mic("vigilante")
+                self._notice("El micrófono se había silenciado solo; lo reactivé")
+                self._last_signal = self._clock()
+            except Exception as exc:  # noqa: BLE001
+                self._show_warning(str(exc))
+            self._refresh_mic()
+            return
+        now = self._clock()
+        if now - self._last_signal >= self.SILENCE_S:
+            if now - self._last_restart >= self.RESTART_COOLDOWN_S:
+                self._last_restart = now
+                self._last_signal = now
+                self._silence_warned = False
+                self.mic_events += 1
+                self._log_mic("vigilante: sin audio")
+                if self.engine.restart_capture():
+                    self._notice("No llegaba audio; reinicié el micrófono")
+            elif not self._silence_warned:
+                self._silence_warned = True
+                self._notice("No llega audio del micrófono (¿botón de silencio del auricular?)")
 
     def _on_mic_slider(self, value: int) -> None:
         self.lbl_mic_vol.setText(f"{value} %")
@@ -886,13 +983,6 @@ class MainWindow(QMainWindow):
         if self._orb is not None and self._sys_mic is not None:
             vol = self._sys_mic.volume if not self._sys_mic.muted else 0
             self._orb.set_caption(f"Volumen del micrófono: {vol} %")
-
-    def _orb_toggle_sys_mic(self) -> None:
-        self._refresh_mic()
-        if self._sys_mic is not None and self._sys_mic.muted is not None:
-            self.chk_mic_on.setChecked(
-                bool(self._sys_mic.muted)
-            )  # si estaba silenciado, se activa (y al revés)
 
     # -- voz genérica: hombre o mujer ---------------------------------------------------------------------
 
@@ -1058,6 +1148,13 @@ class MainWindow(QMainWindow):
 
     def _on_mute_toggled(self, muted: bool) -> None:
         self.engine.set_muted(muted)
+        if not self._syncing_mic:
+            self._syncing_mic = True
+            self.chk_mic_on.blockSignals(True)
+            self.chk_mic_on.setChecked(not muted)
+            self.chk_mic_on.blockSignals(False)
+            self._syncing_mic = False
+            self._apply_sys_mic(not muted, "persona")
         self._sync_orb()
         self.btn_mute.setText(MUTE_ON_TEXT if muted else MUTE_OFF_TEXT)
         self.btn_mute.setStyleSheet(
@@ -1122,6 +1219,12 @@ class MainWindow(QMainWindow):
             w.setEnabled(editable)
         if not running:
             self._level = 0.0
+        if running:
+            self._last_signal = self._clock()
+            self._silence_warned = False
+            self._mic_watch_timer.start(2000)
+        else:
+            self._mic_watch_timer.stop()
         self._sync_orb()
 
     # -- orbe (interfaz alternativa) -------------------------------------------------------------------------
@@ -1165,7 +1268,8 @@ class MainWindow(QMainWindow):
             orb.classic_requested.connect(self.close_orb)
             orb.closed.connect(self._orb_closed)
             orb.volume_step.connect(self._orb_volume_step)
-            orb.sys_mic_toggle_requested.connect(self._orb_toggle_sys_mic)
+            orb.sys_mic_toggle_requested.connect(self.btn_mute.toggle)
+            orb.reconnect_requested.connect(self.reconnect_mic)
             saved = str(self._settings.value("orb_animation", "", type=str))
             if saved:
                 orb.set_animation(saved)
@@ -1217,6 +1321,8 @@ class MainWindow(QMainWindow):
         self.log.setFocus()
 
     def _on_level(self, rms: float) -> None:
+        if rms > 1e-6:
+            self._last_signal = self._clock()
         if self._orb is not None and not self.engine.muted:
             self._orb.push_level(rms)
         if self.engine.muted:  # silenciado: el medidor quieto evita pensar que se está traduciendo

@@ -179,6 +179,7 @@ class Engine:
         self._backends: Backends | None = None
         self._pipeline: Pipeline | None = None
         self._capture: Any = None
+        self._segmenter: Any = None
         self._player: Any = None
         self.muted = False
         self.segments_sent = 0
@@ -277,6 +278,7 @@ class Engine:
             )
             classifier = AdaptiveEnergyVAD() if cfg.vad_mode == "auto" else EnergyVAD(cfg.vad_threshold_db)
             segmenter = Segmenter(classifier, VadConfig(end_silence_ms=max(160, cfg.pause_ms)))
+            self._segmenter = segmenter
             if cfg.output_mode == "browser":
                 self._player = WebMicPlayer(
                     self.ensure_webmic(), self._pipeline.get_audio, self.events.on_error
@@ -334,6 +336,35 @@ class Engine:
             except RuntimeError as exc:
                 raise EngineError(str(exc)) from exc
         return self._webmic
+
+    def restart_capture(self) -> bool:
+        """Cierra y vuelve a abrir la captura del micrófono SIN recargar modelos ni cortar lo que traduce.
+
+        Sirve cuando el flujo de audio quedó «colgado» (cambio de perfil Bluetooth, dispositivo reconectado).
+        Devuelve ``False`` si no se interpreta o si no se pudo abrir el micrófono (se avisa por ``on_error``).
+        """
+        with self._lock:
+            if self._state is not EngineState.RUNNING or self._capture is None:
+                return False
+            try:
+                self._capture.stop()
+            except Exception:  # noqa: BLE001 - se vuelve a abrir igualmente
+                log.warning("No se pudo detener bien la captura anterior", exc_info=True)
+            cfg = self.config
+            self._capture = self._capture_factory(
+                cfg.input_device,
+                self._segmenter,
+                self._on_segment,
+                self.events.on_level,
+                on_error=self.events.on_error,
+            )
+            try:
+                self._capture.start()
+            except Exception as exc:  # noqa: BLE001
+                self._fail(f"No se pudo reabrir el micrófono: {exc}", exc)
+                return False
+            log.info("Captura del micrófono reiniciada")
+            return True
 
     def _teardown(self) -> None:
         if self._capture is not None:

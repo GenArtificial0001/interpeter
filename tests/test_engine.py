@@ -673,3 +673,32 @@ def test_cambiar_la_voz_en_caliente_llega_al_banco_de_voces():
     )
     assert wait_for(lambda: banco.preparadas == ["en"])  # la carga va en segundo plano
     eng.close()
+
+
+def test_restart_capture_reabre_el_microfono_sin_recargar_modelos():
+    eng, h = make()
+    eng.load()
+    assert eng.restart_capture() is False  # sin interpretar no hace nada
+    eng.start()
+    primera = h["cap"]
+    cargas = []
+    eng._backend_factory = lambda cfg: cargas.append(1)  # si recargara modelos, se vería aquí
+    assert eng.restart_capture() is True
+    assert h["cap"] is not primera and primera.stopped and h["cap"].started
+    assert cargas == [] and eng.state is EngineState.RUNNING
+    eng.stop()
+
+
+def test_restart_capture_avisa_si_no_se_puede_reabrir_el_microfono():
+    errores = []
+    eng, h = make(EngineEvents(on_error=errores.append))
+    eng.load()
+    eng.start()
+
+    class Rota(FakeCapture):
+        def start(self):
+            raise OSError("dispositivo ocupado")
+
+    eng._capture_factory = lambda *a, **k: Rota(*a, **k)
+    assert eng.restart_capture() is False
+    assert any("No se pudo reabrir el micrófono" in e for e in errores)

@@ -11,7 +11,7 @@ verificado o como hipótesis.
 
 - **Qué es:** intérprete de voz local en tiempo real. Hablas español → los demás oyen inglés/portugués/francés
   en Teams, Meet o Zoom (en el navegador), con voz genérica o con tu voz clonada.
-- **Versiones al cierre:** app **0.5.1**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
+- **Versiones al cierre:** app **0.6.0**, extensión del navegador **0.3.3**. Rama de trabajo `dev`; `main` está
   en 0.2.3 (commit `27fad77`) y se actualiza solo cuando el usuario lo pide.
 - **Funciona y está verificado en reuniones reales (el usuario lo confirmó):** Teams web, Google Meet y Zoom web
   con el micrófono virtual; glosario; lectura de cifras en voz alta; voz clonada rápida (YourTTS).
@@ -305,3 +305,15 @@ Carpeta [`docs/specs/`](specs/README.md): **A** micrófono unificado + vigilante
 porcentaje, sonido futurista de «listo» y retraso visible, **C** Ajustes rediseñado (pequeño, menú lateral, colores Ford Blue de
 Visión; categorías Idiomas, Audio, Voces y motor, Análisis). Orden recomendado: A → B → C. Cada spec trae REQ-IDs con criterios
 de aceptación, archivos a tocar y riesgos. Decisiones abiertas con la persona en `docs/specs/README.md`.
+
+## 20. Spec A implementada (0.6.0) — micrófono unificado
+
+- Un solo interruptor «micrófono encendido/apagado»: botón del orbe, casilla «Micrófono activado» y botón «Apagar/Encender micrófono»
+  son lo mismo (`MainWindow._on_mute_toggled` ↔ `_on_mic_toggled`, con `_syncing_mic` contra bucles). Apagar = aplicación sin traducir +
+  micrófono silenciado en Windows; **Encender fuerza un ciclo** (`sysmic.force_cycle`: silenciar y reactivar) y, si se interpreta,
+  `Engine.restart_capture()` (reabre la captura sin recargar modelos). «Reconectar» (casilla Audio y menú del orbe) hace lo mismo.
+- **Vigilante** (`MainWindow._mic_watch`, cada 2 s solo al interpretar y con «Mantener el micrófono activo» marcado): reactiva un
+  micrófono que otro silenció y, si pasan 6 s sin ninguna señal, reinicia la captura (máx. 1 cada 30 s; luego avisa). Nunca actúa
+  si la persona apagó el micrófono. Cada cambio queda en el registro: `Micrófono: silenciado=… volumen=… dispositivo=… origen=persona|vigilante`.
+- **No verificado con el micrófono real**: las pruebas usan el falso; la causa de que «se apague solo» sigue sin diagnóstico (ahora el
+  registro mostrará cuándo ocurre). Pendiente: spec B (carga con % y sonido) y C (Ajustes rediseñado).

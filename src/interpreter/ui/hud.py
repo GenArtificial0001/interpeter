@@ -106,7 +106,8 @@ class OrbWindow(QWidget):
     classic_requested = Signal()  # menú: volver a la ventana clásica
     closed = Signal()  # la ventana se cerró (Alt+F4 o menú «Salir»)
     volume_step = Signal(int)  # rueda sobre «Micrófono»: +5 / -5 (volumen de Windows)
-    sys_mic_toggle_requested = Signal()  # menú: activar o silenciar el micrófono de Windows
+    sys_mic_toggle_requested = Signal()  # menú: encender o apagar el micrófono
+    reconnect_requested = Signal()  # menú: reiniciar el micrófono
     animation_changed = Signal(str)  # el modo de animación cambió (menú o apagado automático por lentitud)
 
     BUTTONS = ("settings", "history", "mic")  # orden de hit-test
@@ -599,9 +600,10 @@ class OrbWindow(QWidget):
             act.setChecked(mode == self.animation)
             act.triggered.connect(lambda _=False, m=mode: self.set_animation(m))
             anim.addAction(act)
-        if self.sys_mic_muted is not None:
-            label = "Activar micrófono de Windows" if self.sys_mic_muted else "Silenciar micrófono de Windows"
-            menu.addAction(label).triggered.connect(self.sys_mic_toggle_requested.emit)
+        menu.addAction("Encender micrófono" if self.muted else "Apagar micrófono").triggered.connect(
+            self.sys_mic_toggle_requested.emit
+        )
+        menu.addAction("Reconectar micrófono").triggered.connect(self.reconnect_requested.emit)
         classic = menu.addAction("Volver a la ventana clásica")
         classic.triggered.connect(self.classic_requested.emit)
         menu.addSeparator()
