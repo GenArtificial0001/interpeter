@@ -419,3 +419,8 @@ icono de usuario (`_icon_user`) para «Hablo». Regla: toda pantalla nueva debe 
 Botón «Nivel» (`SLOTS["level"] = 222`, arriba a la izquierda): `OrbWindow.mic_volume` lo informa `MainWindow._refresh_mic`;
 `MainWindow._pick_level` reutiliza `_orb_volume_step` (la misma ruta que la rueda del ratón). Las pruebas ya no reinician
 PortAudio (`tests/conftest.py::portaudio_sin_reinicios`): hacerlo desde varios hilos tumbaba la suite con un acceso inválido.
+
+### 25.2 Archivos del instalador con versión en el nombre
+`scripts/build_installer.py` genera en `dist/`: `Instalar Interpreter v<versión>.exe` (con el número en Propiedades →
+Detalles) y `Instalar Interpreter v<versión> (prueba).bat` (copia del `.bat` de la raíz que trabaja sobre la carpeta
+madre del proyecto), y borra los instaladores de otras versiones. `dist/` no se versiona.
