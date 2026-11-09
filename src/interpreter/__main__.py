@@ -67,6 +67,16 @@ def shutdown(engine: object, code: int = 0, grace_s: float = 5.0) -> None:
         logging.getLogger("interpreter").exception("Error al cerrar el motor")
 
 
+def _force_light_scheme(app) -> None:  # noqa: ANN001
+    """Tema claro: se ignora el modo oscuro de Windows (si no, diálogos y menús salen ilegibles)."""
+    from PySide6.QtCore import Qt
+
+    try:
+        app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+    except Exception:  # noqa: BLE001 - Qt < 6.8 no lo tiene: las hojas de estilo de theme.py cubren lo esencial
+        logging.getLogger("interpreter").debug("No se pudo forzar el esquema de color claro", exc_info=True)
+
+
 def main() -> int:
     from .stages.backends import app_home, use_local_model_cache
 
@@ -88,6 +98,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("Interpreter")
+    _force_light_scheme(app)
     mode = ui_mode_from_args(sys.argv[1:])
     win = MainWindow(ui_mode=mode)
     if not win.starts_in_orb:

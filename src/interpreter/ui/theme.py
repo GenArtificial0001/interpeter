@@ -49,6 +49,10 @@ QMenu::item:checked {{ font-weight: 700; color: {ACCENT}; }}
 QMenu::separator {{ height: 1px; background: {BORDER}; margin: 5px 8px; }}
 """
 
+TOOLTIP_STYLE = f"""
+QToolTip {{ background: #FFFFFF; color: {TEXT}; border: 1px solid {BORDER_STRONG}; padding: 5px 8px; }}
+"""
+
 STYLESHEET = (
     f"""
 * {{ font-family: "Segoe UI", "Inter", sans-serif; font-size: 13px; color: {TEXT}; }}
@@ -120,6 +124,18 @@ QScrollBar:vertical {{ background: {SURFACE_2}; width: 10px; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {ACCENT}; border-radius: 5px; min-height: 30px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+QDialog, QMessageBox {{ background: {BG}; }}
+QDialog QLabel {{ color: {TEXT}; background: transparent; }}
+QTableWidget, QTableView {{
+    background: #FFFFFF; alternate-background-color: {SURFACE}; color: {TEXT}; gridline-color: {BORDER};
+    border: 1px solid {BORDER}; border-radius: 8px; selection-background-color: {ACCENT_SOFT}; selection-color: {TEXT};
+}}
+QTableWidget QLineEdit {{ background: #FFFFFF; color: {TEXT}; }}
+QHeaderView::section {{
+    background: {SURFACE}; color: {TEXT}; border: none; border-right: 1px solid {BORDER};
+    border-bottom: 1px solid {BORDER}; padding: 6px 8px; font-weight: 600;
+}}
+QTableCornerButton::section {{ background: {SURFACE}; border: none; }}
 QToolTip {{ background: #FFFFFF; color: {TEXT}; border: 1px solid {BORDER_STRONG}; }}
 """
     + MENU_STYLE

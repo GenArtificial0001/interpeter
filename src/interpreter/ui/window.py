@@ -19,7 +19,6 @@ from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -62,6 +61,7 @@ from . import theme
 from .analysis import AnalysisPage
 from .glossary_dialog import GlossaryDialog
 from .hud import NATIVE, Mood, OrbWindow
+from .toggle import Toggle
 from .voice_dialog import VoiceSampleDialog
 
 log = logging.getLogger(__name__)
@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         self.mic_row = QWidget()
         mic_lay = QHBoxLayout(self.mic_row)
         mic_lay.setContentsMargins(0, 0, 0, 0)
-        self.chk_mic_on = QCheckBox("Micrófono activado")
+        self.chk_mic_on = Toggle("Micrófono activado")
         self.chk_mic_on.setToolTip(
             "Enciende o apaga el micrófono (en Interpreter y en Windows, como Panel de control > Sonido)."
         )
@@ -461,14 +461,14 @@ class MainWindow(QMainWindow):
         self._mic_timer.timeout.connect(self._apply_mic_volume)
         self.chk_mic_on.toggled.connect(self._on_mic_toggled)
         self.sld_mic.valueChanged.connect(self._on_mic_slider)
-        self.chk_sound = QCheckBox("Sonido al terminar de cargar")
+        self.chk_sound = Toggle("Sonido al terminar de cargar")
         self.chk_sound.setChecked(bool(self._settings.value("sound_on_ready", True, type=bool)))
         self.chk_sound.setToolTip(
             "Avisa con un sonido corto cuando los modelos terminaron de cargar y ya puedes interpretar."
         )
         self.chk_sound.toggled.connect(lambda on: self._settings.setValue("sound_on_ready", on))
         self._ready_chime = sound.make_ready_chime()
-        self.chk_keep_mic = QCheckBox("Mantener el micrófono activo mientras interpreto")
+        self.chk_keep_mic = Toggle("Mantener el micrófono activo mientras interpreto")
         self.chk_keep_mic.setChecked(bool(self._settings.value("keep_mic_alive", True, type=bool)))
         self.chk_keep_mic.setToolTip(
             "Si Windows o el auricular lo silencian solo, se reactiva en segundos; si deja de llegar audio, "
@@ -502,7 +502,7 @@ class MainWindow(QMainWindow):
             "Rápida responde antes pero corta las frases en trozos más cortos; lenta traduce frases más "
             "completas pero tarda más."
         )
-        self.chk_echo = QCheckBox("Anti-eco")
+        self.chk_echo = Toggle("Anti-eco")
         self.chk_echo.setChecked(True)
         self.chk_echo.setToolTip(
             "Ignora lo que el micrófono capte mientras suena la traducción. Evita que la app se escuche a "
@@ -986,6 +986,8 @@ class MainWindow(QMainWindow):
             self.lbl_mic_vol.setText(f"{mic.volume} %")
         if self._orb is not None:
             self._orb.sys_mic_muted = mic.muted if known and mic is not None else None
+            self._orb.mic_volume = (0 if mic.muted else mic.volume) if known and mic is not None else None
+            self._orb.update()
 
     def _on_mic_toggled(self, on: bool) -> None:
         """La casilla y el botón «apagar micrófono» son el MISMO interruptor: la casilla mueve al botón."""
@@ -1406,6 +1408,7 @@ class MainWindow(QMainWindow):
             orb.speak_requested.connect(lambda: self._pick_from(self.cmb_source, "Yo hablo"))
             orb.listen_requested.connect(lambda: self._pick_from(self.cmb_target, "Ellos escuchan"))
             orb.voice_requested.connect(self._pick_voice)
+            orb.level_requested.connect(self._pick_level)
             orb.swap_requested.connect(self._swap_languages)
             orb.glossary_requested.connect(self._edit_glossary)
             orb.echo_toggle_requested.connect(self.chk_echo.toggle)
@@ -1490,6 +1493,24 @@ class MainWindow(QMainWindow):
         """Menú junto al cursor con las opciones del desplegable (elegir una = elegirla en Ajustes)."""
         menu = self._menu(title)
         self._add_combo_items(menu, combo)
+        menu.exec(QCursor.pos())
+
+    def _pick_level(self) -> None:
+        """Menú del volumen del micrófono: sube o baja de 10 en 10, o lo fija en 25/50/75/100 %."""
+        menu = self._menu("Volumen del micrófono")
+        actual = (
+            self._sys_mic.volume if self._sys_mic is not None and self._sys_mic.volume is not None else None
+        )
+        for texto, delta in (("Subir 10 %", 10), ("Bajar 10 %", -10)):
+            menu.addAction(texto).triggered.connect(lambda _=False, d=delta: self._orb_volume_step(d))
+        menu.addSeparator()
+        for pct in (25, 50, 75, 100):
+            action = menu.addAction(f"{pct} %")
+            action.setCheckable(True)
+            action.setChecked(actual == pct)
+            action.triggered.connect(
+                lambda _=False, p=pct: self._orb_volume_step(p - (actual if actual is not None else p))
+            )
         menu.exec(QCursor.pos())
 
     def _pick_voice(self) -> None:

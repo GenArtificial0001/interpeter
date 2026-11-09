@@ -408,3 +408,14 @@ Invertir idiomas, Pausa para cerrar frase, Anti-eco y Glosario. `theme.MENU_STYL
 Ajustes: con el orbe abierto, la X de la ventana solo la oculta (`closeEvent` con `event.spontaneous()`); «Ajustes» del
 orbe alterna mostrar/ocultar; «Cerrar» (o «Salir de Interpreter») cierra todo (motor y puerto 8765 incluidos).
 Tamaño inicial del orbe: 640 px. Los iconos se dibujan con `QPainter` (`_icon_*` en `ui/hud.py`), blancos y lineales.
+
+## 28. Retoques de diseño (0.10.1) — solo apariencia, sin cambios funcionales
+`ui/toggle.py` (`Toggle`, un `QCheckBox` pintado como interruptor ON/OFF) sustituye a las casillas de Ajustes.
+`__main__._force_light_scheme` fuerza el esquema claro de Qt; `theme.py` añade estilo claro a `QDialog`/`QMessageBox`/tablas/
+cabeceras y `MENU_STYLE`/`TOOLTIP_STYLE`. Orbe: «Cerrar» en el centro inferior (`SLOTS["close"] = 90`), «Micrófono» arriba
+a la derecha (`-42`), tooltips (`OrbWindow.tooltip_for` + evento `ToolTip`), fondo translúcido tras botones y título,
+icono de usuario (`_icon_user`) para «Hablo». Regla: toda pantalla nueva debe verse bien con Windows en modo oscuro
+(`tests/test_hud.py::test_los_dialogos_se_leen_aunque_windows_este_en_modo_oscuro`).
+Botón «Nivel» (`SLOTS["level"] = 222`, arriba a la izquierda): `OrbWindow.mic_volume` lo informa `MainWindow._refresh_mic`;
+`MainWindow._pick_level` reutiliza `_orb_volume_step` (la misma ruta que la rueda del ratón). Las pruebas ya no reinician
+PortAudio (`tests/conftest.py::portaudio_sin_reinicios`): hacerlo desde varios hilos tumbaba la suite con un acceso inválido.

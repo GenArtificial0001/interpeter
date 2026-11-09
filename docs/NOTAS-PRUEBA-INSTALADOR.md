@@ -35,6 +35,12 @@ Estado: ✅ corregido · 🔧 en curso · ⏳ pendiente / sin decidir. Quien pru
 | 11 | Falta un icono de cerrar desde el orbe. | ✅ 0.10.0: «Cerrar» (símbolo de apagado, arriba a la derecha) cierra la aplicación completa. |
 | 12 | Agrandar un poco el orbe. | ✅ 0.10.0: tamaño inicial 480 → 640 px (la rueda sigue cambiándolo entre 320 y 900). |
 
+| 13 | No se veía si las casillas estaban marcadas (Micrófono activado, Mantener el micrófono activo, Anti-eco, Sonido al terminar de cargar). | ✅ 0.10.1: son interruptores ON/OFF (`ui/toggle.py`, mismo comportamiento que un QCheckBox). |
+| 14 | Glosario y «Grabar mi voz» salían con letra oscura sobre fondo oscuro (modo oscuro de Windows). | ✅ 0.10.1: la app fuerza el esquema claro de Qt, `theme.py` da fondo claro a diálogos y tablas, y un test los renderiza con paleta oscura y comprueba el contraste. |
+| 15 | Icono de «Yo hablo»: dejar solo el usuario, sin mano. | ✅ 0.10.1: cabeza y hombros. |
+| 16 | «Cerrar» al centro de abajo (cambiar lugar con Micrófono) y tooltip al pasar el ratón. | ✅ 0.10.1: Cerrar centrado abajo, Micrófono arriba a la derecha; todos los botones del orbe tienen tooltip. Los botones y el título llevan un fondo translúcido oscuro para leerse sobre escritorios claros. |
+| 17 | Añadir un icono a la izquierda (arriba) para equilibrar con «Micrófono»: nivel / volumen del micrófono. | ✅ 0.10.1: botón «Nivel» (barras que se encienden según el volumen de Windows); su menú sube/baja 10 % o fija 25/50/75/100 %. |
+
 ## Para decidir
 
 | # | Tema | Estado |

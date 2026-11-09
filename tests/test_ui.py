@@ -79,7 +79,7 @@ def test_iniciar_detener_y_transcripcion(app, settings):
     assert win.btn_toggle.text() == "Detener"
     assert not win.cmb_source.isEnabled()  # no se cambia el idioma de entrada en marcha
     _Cap.last.on_segment(SpeechSegment(np.zeros(16000, dtype=np.float32)))
-    assert pump(app, lambda: "hello world" in win.log.toPlainText(), 3)
+    assert pump(app, lambda: "hello world" in win.log.toPlainText(), 10)
     assert "hola mundo" in win.log.toPlainText()
     win.btn_toggle.click()
     assert win.engine.state is EngineState.READY

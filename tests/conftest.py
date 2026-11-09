@@ -43,3 +43,10 @@ def mic_falso():
     sysmic.set_backend(backend)
     yield backend
     sysmic.set_backend(None)
+
+
+@pytest.fixture(autouse=True)
+def portaudio_sin_reinicios(monkeypatch):
+    """Las pruebas no reinician PortAudio: ``_terminate/_initialize`` desde varios hilos (los sondeos de
+    dispositivos de ventanas de prueba) provocan un acceso inválido que tumba toda la suite."""
+    monkeypatch.setattr("interpreter.audio.devices.refresh_devices", lambda: None)

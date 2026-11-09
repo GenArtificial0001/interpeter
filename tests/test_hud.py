@@ -405,9 +405,11 @@ def test_el_orbe_muestra_los_idiomas_actuales_bajo_hablo_y_escuchan(app):
     w = OrbWindow(500)
     w.set_languages("Español", "English")
     assert (w.src_name, w.dst_name) == ("Español", "English")
-    assert {"speak", "listen", "voice", "input", "mic", "output", "settings", "close"} == set(
-        w.button_rects()
+    assert set(w.button_rects()) == set(w.BUTTONS)
+    assert {"speak", "listen", "voice", "input", "mic", "level", "output", "settings", "close"} == set(
+        w.BUTTONS
     )
+    w.close()
 
 
 def test_los_botones_del_orbe_no_se_pisan(app):
@@ -416,6 +418,7 @@ def test_los_botones_del_orbe_no_se_pisan(app):
     for i, a in enumerate(rects):
         for b in rects[i + 1 :]:
             assert not a.intersects(b), (a, b)
+    w.close()
 
 
 def test_la_traduccion_aparece_como_subtitulo_y_el_nivel_mueve_el_orbe(app, settings):
@@ -939,3 +942,139 @@ def test_el_avance_del_motor_llega_al_orbe(app, settings):
     win._on_progress(0.6, "Cargando la voz…")
     assert win._orb.stage_label == "Cargando la voz…"
     win.close()
+
+
+# -- diseño: interruptores, diálogos legibles, tooltips y posición de «Cerrar» -------------------------------
+
+
+def test_las_casillas_de_ajustes_son_interruptores_on_off(app, settings):
+    from interpreter.ui.toggle import Toggle
+
+    win = _ventana(settings)
+    for chk in (win.chk_mic_on, win.chk_keep_mic, win.chk_echo, win.chk_sound):
+        assert isinstance(chk, Toggle)
+        antes = chk.isChecked()
+        chk.setChecked(not antes)  # mismo comportamiento que un QCheckBox
+        assert chk.isChecked() is (not antes)
+        chk.setChecked(antes)
+    win.close()
+
+
+def test_el_interruptor_se_ve_distinto_encendido_y_apagado(app):
+    from interpreter.ui.toggle import Toggle
+
+    t = Toggle("Anti-eco")
+    t.resize(t.sizeHint())
+    t.setChecked(False)
+    off = t.grab().toImage()
+    t.setChecked(True)
+    on = t.grab().toImage()
+    assert off != on
+    azul = on.pixelColor(4, on.height() // 2)  # la pista encendida es azul Ford
+    assert azul.blue() > 200 and azul.red() < 80
+    t.setEnabled(False)
+    assert t.grab().toImage() != on
+
+
+def _luminosidad(c):
+    return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+
+
+def test_los_dialogos_se_leen_aunque_windows_este_en_modo_oscuro(app, settings, tmp_path):
+    from PySide6.QtGui import QColor, QPalette
+
+    from interpreter.glossary import Glossary
+    from interpreter.ui.glossary_dialog import GlossaryDialog
+    from interpreter.ui.voice_dialog import VoiceSampleDialog
+
+    paleta_anterior = app.palette()
+    oscura = QPalette()
+    for rol, color in (
+        (QPalette.ColorRole.Window, "#202020"),
+        (QPalette.ColorRole.Base, "#2b2b2b"),
+        (QPalette.ColorRole.AlternateBase, "#333333"),
+        (QPalette.ColorRole.Button, "#2d2d2d"),
+        (QPalette.ColorRole.WindowText, "#f0f0f0"),
+        (QPalette.ColorRole.Text, "#f0f0f0"),
+        (QPalette.ColorRole.ButtonText, "#f0f0f0"),
+    ):
+        oscura.setColor(rol, QColor(color))
+    app.setPalette(oscura)
+    win = _ventana(settings)
+    try:
+        glos = GlossaryDialog(win, Glossary.defaults(), tmp_path / "g.json")
+        voz = VoiceSampleDialog(win, None, tmp_path / "mi_voz.wav")
+        for dlg in (glos, voz):
+            dlg.show()
+            app.processEvents()
+            img = dlg.grab().toImage()
+            assert _luminosidad(img.pixelColor(6, img.height() // 2)) > 200, dlg.windowTitle()  # fondo claro
+        tabla = glos.table
+        fila = tabla.grab().toImage()
+        assert _luminosidad(fila.pixelColor(fila.width() - 30, fila.height() // 2)) > 200  # celdas claras
+        for dlg in (glos, voz):
+            dlg.close()
+    finally:
+        app.setPalette(paleta_anterior)
+        win.close()
+
+
+def test_cerrar_esta_centrado_abajo_y_el_microfono_arriba_a_la_derecha(app):
+    w = OrbWindow(640)
+    r = w.button_rects()
+    c = w._center()
+    assert abs(r["close"].center().x() - c.x()) < 1  # centrado
+    assert r["close"].center().y() > c.y()  # debajo del ojo
+    assert r["mic"].center().x() > c.x() and r["mic"].center().y() < c.y()
+    w.close()
+
+
+def test_cada_boton_del_orbe_tiene_su_tooltip(app, monkeypatch):
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QHelpEvent
+
+    w = OrbWindow(640)
+    w.set_languages("Español", "English")
+    vistos = []
+    monkeypatch.setattr("interpreter.ui.hud.QToolTip.showText", lambda pos, texto, *_a: vistos.append(texto))
+    for nombre, rect in w.button_rects().items():
+        punto = rect.center().toPoint()
+        w.event(QHelpEvent(QEvent.Type.ToolTip, punto, QPoint(10, 10)))
+        assert vistos and vistos[-1] == w.tooltip_for(nombre) != "", nombre
+    assert "Español" in w.tooltip_for("speak") and "English" in w.tooltip_for("listen")
+    assert "cierra toda la aplicación" in w.tooltip_for("close")
+    w.close()
+
+
+def test_el_boton_nivel_ajusta_el_volumen_del_microfono(app, settings, monkeypatch, mic_falso):
+    monkeypatch.setattr("interpreter.ui.window.QMenu", FalsoMenu)
+    win = _ventana(settings)
+    win.open_orb()
+    assert win._sys_mic is not None and win._orb.mic_volume == 80  # el orbe conoce el volumen actual
+    r = win._orb.button_rects()
+    assert r["level"].center().x() < win._orb._center().x()  # a la izquierda, equilibrando a «Micrófono»
+    FalsoMenu.ultimo = None
+    win._orb.level_requested.emit()
+    menu = FalsoMenu.ultimo
+    assert menu.titulo == "Volumen del micrófono"
+    textos = [a.texto for a in menu.opciones]
+    assert textos[:2] == ["Subir 10 %", "Bajar 10 %"] and "50 %" in textos
+    elegir = {a.texto: a for a in menu.opciones}
+    elegir["50 %"].disparar()
+    assert mic_falso.volume == 50 and win._orb.mic_volume == 50
+    FalsoMenu.ultimo = None
+    win._orb.level_requested.emit()
+    {a.texto: a for a in FalsoMenu.ultimo.opciones}["Subir 10 %"].disparar()
+    assert mic_falso.volume == 60
+    assert "60 %" in win._orb.tooltip_for("level")
+    win.close()
+
+
+def test_el_icono_de_nivel_enciende_barras_segun_el_volumen(app):
+    w = OrbWindow(400)
+    imagenes = []
+    for vol in (0, 30, 60, 100):
+        w.mic_volume = vol
+        imagenes.append(w.grab().toImage())
+    assert imagenes[0] != imagenes[1] != imagenes[2] != imagenes[3]
+    w.close()
