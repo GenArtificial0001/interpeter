@@ -24,6 +24,7 @@ from PySide6.QtGui import (
     QColor,
     QConicalGradient,
     QFont,
+    QFontMetricsF,
     QIcon,
     QPainter,
     QPainterPath,
@@ -237,11 +238,7 @@ class OrbWindow(QWidget):
 
     def button_rects(self) -> dict[str, QRectF]:
         u, c = self._unit(), self._center()
-        w, h, radius = (
-            u * 0.20,
-            u * 0.16,
-            u * 0.45,
-        )  # sobre el anillo grande, de izquierda a derecha por abajo
+        w, h, radius = u * 0.20, u * 0.16, u * 0.54  # pegados al borde del anillo grande (0,70)
         rects = {}
         for name, deg in self.SLOTS.items():
             ang = math.radians(deg)
@@ -455,7 +452,7 @@ class OrbWindow(QWidget):
 
     def _draw_arc(self, p: QPainter, c: QPointF, u: float, accent: QColor, dim: float) -> None:
         """El gran anillo brillante abierto, dibujado en reposo (ángulo 0); gira al pintarlo."""
-        r = u * 0.52
+        r = u * 0.70  # abarca los botones (pegados a su borde) y sus rótulos
         rect = QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r)
         start = -60 * 16
         for width, alpha in ((16, 0.10), (10, 0.18), (6, 0.35), (3, 0.9)):
@@ -559,27 +556,48 @@ class OrbWindow(QWidget):
         f.setWeight(weight)
         return f
 
+    def _fit(self, text: str, px: float, weight: QFont.Weight, max_w: float) -> tuple[QFont, str, float]:
+        """Fuente y texto que caben en ``max_w``: se achica la letra y, si aún no cabe, se recorta con «…»."""
+        size = px
+        while True:
+            font = self._font(size, weight)
+            fm = QFontMetricsF(font)
+            if fm.horizontalAdvance(text) <= max_w or size <= px * 0.62:
+                break
+            size *= 0.94
+        shown = fm.elidedText(text, Qt.TextElideMode.ElideRight, max_w)
+        return font, shown, fm.horizontalAdvance(shown)
+
     def _draw_texts(self, p: QPainter, c: QPointF, u: float, accent: QColor) -> None:
+        max_w = u * 0.50  # entre «Nivel» y «Micrófono»: el título nunca desborda
+        sub_text = (
+            self.stage_label
+            if self.mood is Mood.LOADING and self.stage_label
+            else f"{self.src_name} → {self.dst_name}"
+        )
+        title, title_text, tw = self._fit(
+            TITLES[self.mood], u * (0.05 if self.mood is Mood.LOADING else 0.066), QFont.Weight.Bold, max_w
+        )
+        sub, sub_shown, sw = self._fit(sub_text, u * 0.055, QFont.Weight.DemiBold, max_w)
+        plate_w = max(tw, sw) + u * 0.06
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(4, 14, 44, 140))  # fondo: el título se lee sobre cualquier escritorio
-        p.drawRoundedRect(QRectF(c.x() - u * 0.31, c.y() - u * 0.465, u * 0.62, u * 0.19), u * 0.04, u * 0.04)
-        title = self._font(u * (0.05 if self.mood is Mood.LOADING else 0.066), QFont.Weight.Bold)
+        p.drawRoundedRect(
+            QRectF(c.x() - plate_w / 2, c.y() - u * 0.465, plate_w, u * 0.19), u * 0.04, u * 0.04
+        )
         p.setFont(title)
         p.setPen(QColor("#ffffff"))
         p.drawText(
             QRectF(c.x() - u * 0.5, c.y() - u * 0.44, u * 1.0, u * 0.08),
             Qt.AlignmentFlag.AlignCenter,
-            TITLES[self.mood],
+            title_text,
         )
-        sub = self._font(u * 0.055, QFont.Weight.DemiBold)
         p.setFont(sub)
         p.setPen(QColor(accent).lighter(135))
         p.drawText(
             QRectF(c.x() - u * 0.5, c.y() - u * 0.365, u * 1.0, u * 0.07),
             Qt.AlignmentFlag.AlignCenter,
-            self.stage_label
-            if self.mood is Mood.LOADING and self.stage_label
-            else f"{self.src_name} → {self.dst_name}",
+            sub_shown,
         )
         if self.caption:
             cap = self._font(u * 0.058)

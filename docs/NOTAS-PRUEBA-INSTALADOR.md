@@ -40,6 +40,7 @@ Estado: ✅ corregido · 🔧 en curso · ⏳ pendiente / sin decidir. Quien pru
 | 15 | Icono de «Yo hablo»: dejar solo el usuario, sin mano. | ✅ 0.10.1: cabeza y hombros. |
 | 16 | «Cerrar» al centro de abajo (cambiar lugar con Micrófono) y tooltip al pasar el ratón. | ✅ 0.10.1: Cerrar centrado abajo, Micrófono arriba a la derecha; todos los botones del orbe tienen tooltip. Los botones y el título llevan un fondo translúcido oscuro para leerse sobre escritorios claros. |
 | 17 | Añadir un icono a la izquierda (arriba) para equilibrar con «Micrófono»: nivel / volumen del micrófono. | ✅ 0.10.1: botón «Nivel» (barras que se encienden según el volumen de Windows); su menú sube/baja 10 % o fija 25/50/75/100 %. |
+| 18 | El anillo grande del orbe dejaba fuera los rótulos y fondos de los iconos, y «CARGANDO MODELOS…» desbordaba. | ✅ 0.10.2: anillo de 0,52 a 0,70 del radio; botones pegados a su borde (radio 0,54); el título/subtítulo se achican o recortan con «…» para caber entre «Nivel» y «Micrófono». |
 
 ## Para decidir
 

@@ -686,10 +686,10 @@ def test_el_orbe_cabe_dentro_del_anillo_grande(app):
     for name, rect in w.button_rects().items():
         for corner in (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight()):
             d = ((corner.x() - c.x()) ** 2 + (corner.y() - c.y()) ** 2) ** 0.5
-            assert d <= u * 0.60, (
+            assert d <= u * 0.70, (
                 name,
                 d / u,
-            )  # iconos y letras dentro del círculo (el anillo grande mide 0,52)
+            )  # iconos y letras dentro del círculo (el anillo grande mide 0,70)
     assert w.width() == 640  # tamaño inicial (se agrandó un poco para que quepan los 8 botones)
 
 
