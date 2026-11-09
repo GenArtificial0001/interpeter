@@ -46,7 +46,7 @@ Estado: ✅ corregido · 🔧 en curso · ⏳ pendiente / sin decidir. Quien pru
 
 | # | Tema | Estado |
 |---|---|---|
-| 6 | La otra PC tiene Python 3.14. El instalador acepta 3.11–3.13. Las dependencias base se resuelven en 3.14, la voz clonada (`clone`) no (exige `torch<2.8`). No se probó que la app arranque en 3.14. | ⏳ ver memoria `instalador-python-otra-maquina`. |
+| 6 | La otra PC tiene Python 3.14; el instalador solo aceptaba 3.11–3.13. | ✅ 0.10.5: sin tope (3.11 o superior; se prefiere 3.11–3.13 si hay). Las dependencias base se resuelven en 3.14. La voz clonada en 3.14+ se INTENTA (coqui-tts + torchaudio≥2.10, con comprobación real de guardar/leer audio y TTS, y torchcodec de respaldo); si no funciona, se instala todo lo demás sin ella. Pendiente de probar en esa PC. |
 
 ## Regla que sale de esto
 

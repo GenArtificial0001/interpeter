@@ -424,3 +424,10 @@ PortAudio (`tests/conftest.py::portaudio_sin_reinicios`): hacerlo desde varios h
 `scripts/build_installer.py` genera en `dist/`: `Instalar Interpreter v<versión>.exe` (con el número en Propiedades →
 Detalles) y `Instalar Interpreter v<versión> (prueba).bat` (copia del `.bat` de la raíz que trabaja sobre la carpeta
 madre del proyecto), y borra los instaladores de otras versiones. `dist/` no se versiona.
+
+### 25.3 Python sin tope (0.10.5)
+`find_python` acepta 3.11 o superior y prefiere el más nuevo de 3.11–3.13 (`_rank`). La voz clonada se instala por el
+extra `clone` solo hasta 3.13 (`PY_CLONE_MAX`): su `torch<2.8`/`torchaudio<2.8` no existe para 3.14. En 3.14+ el instalador
+instala la base y luego `install_clone_experimental` (coqui-tts, `torchaudio>=2.10`, `transformers<5`, torchcodec si hace falta)
+y la deja solo si `_clone_works` (importar TTS + guardar/leer un wav con torchaudio) pasa. Hallazgos (2026-11-09): coqui-tts
+no pide `torch<2.8`; en el espejo de Ford `torchaudio` llega a 2.7.1 para cp313 y a 2.11.0 para cp314. No probado en 3.14 real.

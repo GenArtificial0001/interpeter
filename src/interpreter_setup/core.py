@@ -2,7 +2,7 @@
 """Lógica del instalador de Interpreter (sin interfaz): verifica el equipo, instala y comprueba.
 
 El instalador es un ``.exe`` que **lleva su propio Python** (PyInstaller): él mismo no necesita nada instalado.
-Lo que sí necesita la APLICACIÓN es un Python 3.11–3.13 para crear su entorno (``.venv``); este módulo lo busca y,
+Lo que sí necesita la APLICACIÓN es un Python 3.11 o superior para crear su entorno (``.venv``); este módulo lo busca y,
 si no hay, intenta instalarlo solo para el usuario (sin administrador). Nunca se cambia el índice de pip: se usa el
 que ya tenga configurado el equipo (en Ford, el espejo corporativo), y los paquetes internos no se tocan.
 
@@ -12,6 +12,7 @@ Todo se hace con funciones pequeñas que reciben un ``log`` (``Callable[[str], N
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import datetime as dt
 import os
 import re
@@ -28,7 +29,10 @@ from pathlib import Path
 Log = Callable[[str], None]
 
 PY_MIN = (3, 11)
-PY_MAX = (3, 13)  # torch/coqui-tts aún no publican ruedas para 3.14
+PY_CLONE_MAX = (
+    3,
+    13,
+)  # hasta aquí la voz clonada está probada; en 3.14+ se intenta con una comprobación real
 PY_AUTOINSTALL = "3.12.10"  # versión que se instala si el equipo no tiene ninguna compatible
 PY_AUTOINSTALL_URL = "https://www.python.org/ftp/python/{v}/python-{v}-amd64.exe"
 FORD_PROXY = "http://internet.ford.com:83"  # proxy corporativo habitual (ver la guía de red de Ford)
@@ -63,6 +67,18 @@ path = Path(snapshot_download(repo, allow_patterns=base + ["*.safetensors"]))
 if not any(path.glob("*.safetensors")):
     path = Path(snapshot_download(repo, allow_patterns=base + ["pytorch_model.bin"]))
 print("ok", path)
+"""
+# Comprueba lo que ya falló otras veces con torch nuevo: que torchaudio guarde y lea un wav y que TTS importe.
+_CLONE_CHECK = r"""
+import os, tempfile, warnings
+warnings.filterwarnings("ignore")
+import torch, torchaudio
+from TTS.api import TTS  # noqa: F401
+path = os.path.join(tempfile.mkdtemp(), "t.wav")
+torchaudio.save(path, torch.zeros(1, 16000), 16000)
+wav, sr = torchaudio.load(path)
+assert sr == 16000 and wav.shape[-1] == 16000
+print("ok clone-check")
 """
 _YOURTTS_SCRIPT = r"""
 import os, sys, warnings
@@ -163,8 +179,16 @@ def _candidate_pythons() -> list[str]:
     return cands
 
 
+def _rank(info: PythonInfo) -> tuple[bool, tuple[int, int, int]]:
+    """Orden de preferencia: primero los que admiten voz clonada (3.11–3.13) y, dentro de cada grupo, el más nuevo."""
+    return info.version[:2] <= PY_CLONE_MAX, info.version
+
+
 def find_python(forced: Path | None = None) -> PythonInfo | None:
-    """El mejor Python compatible (3.11–3.13) ya instalado, o ``None``."""
+    """El mejor Python (3.11 o superior) ya instalado, o ``None``.
+
+    Se prefiere el más nuevo de 3.11–3.13 (el que tiene voz clonada); si no hay ninguno, el más nuevo que haya.
+    """
     seen: set[str] = set()
     best: PythonInfo | None = None
     for cand in [str(forced)] if forced else _candidate_pythons():
@@ -175,13 +199,13 @@ def find_python(forced: Path | None = None) -> PythonInfo | None:
             continue
         seen.add(exe.lower())
         info = probe_python(exe)
-        if info and PY_MIN <= info.version[:2] <= PY_MAX and (best is None or info.version > best.version):
+        if info and info.version[:2] >= PY_MIN and (best is None or _rank(info) > _rank(best)):
             best = info
     return best
 
 
 def _py_launcher_path(py: str) -> str | None:
-    for minor in (13, 12, 11):
+    for minor in (13, 12, 11, 14, 15):
         try:
             out = subprocess.run(  # noqa: S603
                 [py, f"-3.{minor}", "-c", "import sys; print(sys.executable)"],
@@ -304,11 +328,21 @@ def check_system(opts: Options, log: Log | None = None) -> list[Check]:
 
     py = find_python(opts.python)
     if py:
-        checks.append(Check("Python 3.11–3.13", True, f"{py.text} en {py.path}"))
+        checks.append(Check("Python 3.11 o superior", True, f"{py.text} en {py.path}"))
+        if opts.clone and py.version[:2] > PY_CLONE_MAX:
+            checks.append(
+                Check(
+                    "Voz clonada",
+                    False,
+                    f"con Python {py.text} es experimental (probada hasta 3.13)",
+                    "Se intentará y se comprobará al final; si no funciona, se instala todo lo demás sin ella.",
+                    blocking=False,
+                )
+            )
     else:
         checks.append(
             Check(
-                "Python 3.11–3.13",
+                "Python 3.11 o superior",
                 False,
                 "no encontrado",
                 "El instalador intentará instalarlo solo para tu usuario. Si la red lo bloquea, instálalo desde "
@@ -451,6 +485,34 @@ def install_packages(vpy: Path, dest: Path, opts: Options, log: Log) -> None:
         )
 
 
+def _clone_works(vpy: Path, env: dict[str, str]) -> bool:
+    try:
+        out = subprocess.run(  # noqa: S603
+            [str(vpy), "-c", _CLONE_CHECK], capture_output=True, text=True, timeout=300, env=env,
+            creationflags=_no_window(),
+        )  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0
+
+
+def install_clone_experimental(vpy: Path, dest: Path, opts: Options, log: Log) -> bool:
+    """Voz clonada en Python 3.14+: se intenta con torch/torchaudio nuevos y se comprueba que de verdad funcione.
+
+    Es un intento: si algo falla, la instalación continúa sin voz clonada (lo demás ya quedó instalado).
+    """
+    env = env_with_proxy(opts.proxy)
+    log("Voz clonada con Python 3.14+ (se intenta y se comprueba)…")
+    pkgs = ["coqui-tts>=0.24", "torchaudio>=2.10", "transformers>=4.56,<5"]
+    if run_streaming([str(vpy), "-m", "pip", "install", "--no-input", *pkgs], log, env, dest) != 0:
+        return False
+    if _clone_works(vpy, env):
+        return True
+    log("torchaudio no puede leer/guardar audio: pruebo con torchcodec…")
+    run_streaming([str(vpy), "-m", "pip", "install", "--no-input", "torchcodec"], log, env, dest)
+    return _clone_works(vpy, env)
+
+
 def copy_models(src: Path, dest: Path, log: Log) -> None:
     """Copia una carpeta ``models`` (o la que contiene ``hf``/``ov``) a ``dest/models``."""
     root = src / "models" if (src / "models").is_dir() else src
@@ -562,17 +624,25 @@ def run_install(opts: Options, log: Log, step: Callable[[str], None] | None = No
             py = install_python(dest / "tmp", both, opts.proxy)
         if not py:
             raise RuntimeError(
-                "No hay Python 3.11–3.13 y no se pudo instalar solo. Instala Python 3.12 desde el Portal de "
+                "No hay Python 3.11 o superior y no se pudo instalar solo. Instala Python 3.12 desde el Portal de "
                 "Empresa o python.org (opción «solo para mí») y vuelve a ejecutar el instalador."
             )
         both(f"Usando Python {py.text} ({py.path})")
+        experimental_clone = opts.clone and py.version[:2] > PY_CLONE_MAX
 
         mark("3/6 Copiando la aplicación")
         extract_app(dest, both)
         vpy = create_venv(py, dest, both)
 
         mark("4/6 Instalando dependencias")
-        install_packages(vpy, dest, opts, both)
+        install_packages(
+            vpy, dest, dataclasses.replace(opts, clone=False) if experimental_clone else opts, both
+        )
+        if experimental_clone and not install_clone_experimental(vpy, dest, opts, both):
+            both(
+                f"! La voz clonada no funciona con Python {py.text}: se deja instalado todo lo demás sin ella."
+            )
+            opts = dataclasses.replace(opts, clone=False)
 
         mark("5/6 Modelos")
         if opts.models_from:
