@@ -583,19 +583,19 @@ class OrbWindow(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(4, 14, 44, 140))  # fondo: el título se lee sobre cualquier escritorio
         p.drawRoundedRect(
-            QRectF(c.x() - plate_w / 2, c.y() - u * 0.465, plate_w, u * 0.19), u * 0.04, u * 0.04
+            QRectF(c.x() - plate_w / 2, c.y() - u * 0.525, plate_w, u * 0.19), u * 0.04, u * 0.04
         )
         p.setFont(title)
         p.setPen(QColor("#ffffff"))
         p.drawText(
-            QRectF(c.x() - u * 0.5, c.y() - u * 0.44, u * 1.0, u * 0.08),
+            QRectF(c.x() - u * 0.5, c.y() - u * 0.50, u * 1.0, u * 0.08),
             Qt.AlignmentFlag.AlignCenter,
             title_text,
         )
         p.setFont(sub)
         p.setPen(QColor(accent).lighter(135))
         p.drawText(
-            QRectF(c.x() - u * 0.5, c.y() - u * 0.365, u * 1.0, u * 0.07),
+            QRectF(c.x() - u * 0.5, c.y() - u * 0.425, u * 1.0, u * 0.07),
             Qt.AlignmentFlag.AlignCenter,
             sub_shown,
         )
